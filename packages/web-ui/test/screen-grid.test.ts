@@ -57,7 +57,40 @@ describe("ScreenGrid", () => {
     expect(inputs).toHaveLength(2);
     expect(inputs[0]!.attributes("type")).toBe("text");
     expect(inputs[1]!.attributes("type")).toBe("password"); // hidden はマスク
-    expect((inputs[0]!.element as HTMLInputElement).value).toBe("TARO");
+    expect((inputs[0]!.element as HTMLInputElement).value.trimEnd()).toBe("TARO");
+  });
+
+  it("保護（表示専用）フィールドは readonly 入力として描画される（下線抑止 CSS の対象）", () => {
+    const fields: Field[] = [
+      { index: 1, row: 6, col: 10, length: 8, protected: true, hidden: false, numeric: false, mdt: false, value: "SRCLINE" }
+    ];
+    const w = mount(ScreenGrid, { props: { snapshot: makeSnap(fields), edits: new Map(), focused: false } });
+    const input = w.find("input.grid-input");
+    expect(input.attributes("readonly")).toBeDefined(); // readonly → .grid-input[readonly] で下線非表示
+    expect((input.element as HTMLInputElement).value.trimEnd()).toBe("SRCLINE");
+  });
+
+  it("非 hidden 入力欄はフィールド長までスペース埋め表示（欄内任意桁にカーソル可）", () => {
+    const fields: Field[] = [
+      { index: 1, row: 6, col: 10, length: 10, protected: false, hidden: false, numeric: false, mdt: false, value: "AB" }
+    ];
+    const w = mount(ScreenGrid, { props: { snapshot: makeSnap(fields), edits: new Map(), focused: false } });
+    const v = (w.find("input.grid-input").element as HTMLInputElement).value;
+    expect(v).toBe("AB        "); // 10 桁までスペース埋め
+    expect(v.length).toBe(10);
+  });
+
+  it("複数行フィールド（コマンド行等）は可視行の桁数に収める（次行への回り込み防止）", () => {
+    // (20,7) len=153 は 80 桁画面で row20-21 にまたがる。入力欄は可視行(80-6=74)に収める
+    const fields: Field[] = [
+      { index: 1, row: 20, col: 7, length: 153, protected: false, hidden: false, numeric: false, mdt: false, value: "" }
+    ];
+    const w = mount(ScreenGrid, { props: { snapshot: makeSnap(fields), edits: new Map(), focused: false } });
+    const inp = w.find("input.grid-input");
+    expect(w.findAll("input.grid-input")).toHaveLength(1);
+    expect((inp.element as HTMLInputElement).value.length).toBe(74); // 153 ではなく可視 74
+    expect(inp.attributes("maxlength")).toBe("74");
+    expect(inp.attributes("style")).toContain("74ch");
   });
 
   it("入力欄フォーカスで cursor イベントをフィールド位置で emit する", async () => {
@@ -123,6 +156,22 @@ describe("ScreenGrid", () => {
     await input.trigger("compositionend");
     const emits = w.emitted("edit") as [number, string][];
     expect(emits.at(-1)![1]).toBe("ABC"); // 二重化せず ABC
+  });
+
+  it("hidden（パスワード）欄はスペース埋めで全桁●にならず、実入力分のみ・送信値も実入力", async () => {
+    const fields: Field[] = [
+      { index: 1, row: 6, col: 10, length: 20, protected: false, hidden: true, numeric: false, mdt: false, value: "" }
+    ];
+    const w = mount(ScreenGrid, { props: { snapshot: makeSnap(fields), edits: new Map(), focused: true } });
+    const input = w.find("input.grid-input");
+    expect(input.attributes("type")).toBe("password");
+    await input.trigger("focus");
+    for (const ch of ["P", "A", "S", "S"]) await input.trigger("keydown", { key: ch });
+    // 表示値はパディング空白を含まず 4 文字（field 長 20 の全●表示にならない）
+    expect((input.element as HTMLInputElement).value).toBe("PASS");
+    // 送信値（emit）も実入力
+    const emits = w.emitted("edit") as [number, string][];
+    expect(emits.at(-1)).toEqual([1, "PASS"]);
   });
 
   it("数値フィールドは非数字キーを拒否する", async () => {
@@ -204,7 +253,7 @@ describe("ScreenGrid", () => {
     ];
     const edits = new Map([[1, "NEW"]]);
     const w = mount(ScreenGrid, { props: { snapshot: makeSnap(fields), edits, focused: true } });
-    expect((w.find("input.grid-input").element as HTMLInputElement).value).toBe("NEW");
+    expect((w.find("input.grid-input").element as HTMLInputElement).value.trimEnd()).toBe("NEW");
   });
 
   describe("拡張 5250 GUI オーバーレイ", () => {

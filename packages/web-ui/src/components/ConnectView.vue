@@ -10,10 +10,20 @@ const profiles = ref<PublicProfile[]>([]);
 const error = ref("");
 const connecting = ref(false);
 const showForm = ref(false);
-const form = ref<{ id?: string; name: string; host: string; port?: number; ccsid?: number; deviceName?: string }>({
-  name: "",
-  host: ""
-});
+type ConnForm = {
+  id?: string;
+  name: string;
+  host: string;
+  port?: number;
+  ccsid?: number;
+  deviceName?: string;
+  tls?: boolean;
+  autoSignon?: boolean;
+  user?: string;
+  password?: string;
+};
+const emptyForm = (): ConnForm => ({ name: "", host: "" });
+const form = ref<ConnForm>(emptyForm());
 
 onMounted(async () => {
   try {
@@ -35,10 +45,28 @@ async function connectSaved(c: SavedConnection): Promise<void> {
     host: c.host,
     ...(c.port !== undefined ? { port: c.port } : {}),
     ...(c.ccsid !== undefined ? { ccsid: c.ccsid } : {}),
-    ...(c.deviceName !== undefined ? { deviceName: c.deviceName } : {})
+    ...(c.deviceName !== undefined ? { deviceName: c.deviceName } : {}),
+    ...(c.tls ? { tls: true } : {}),
+    // 自動サインオン有効時のみ資格情報を送る（オフなら signon 画面に着地）
+    ...(c.autoSignon && c.user ? { user: c.user, password: c.password ?? "" } : {})
   };
   settingsStore.markConnected(c.id, Date.now());
   await doConnect(open, c.name);
+}
+
+function editConn(c: SavedConnection): void {
+  form.value = { ...c };
+  showForm.value = true;
+}
+
+function deleteConn(c: SavedConnection): void {
+  if (typeof confirm === "function" && !confirm(`接続「${c.name}」を削除しますか？`)) return;
+  settingsStore.remove(c.id);
+}
+
+function newConn(): void {
+  form.value = emptyForm();
+  showForm.value = true;
 }
 
 async function doConnect(open: Parameters<typeof openSession>[0], label: string): Promise<void> {
@@ -56,9 +84,20 @@ async function doConnect(open: Parameters<typeof openSession>[0], label: string)
 
 function saveForm(): void {
   if (!form.value.name || !form.value.host) return;
-  settingsStore.save(form.value);
+  // 自動サインオン無効なら資格情報は保存しない
+  const conn = { ...form.value };
+  if (!conn.autoSignon) {
+    delete conn.user;
+    delete conn.password;
+  }
+  settingsStore.save(conn);
   showForm.value = false;
-  form.value = { name: "", host: "" };
+  form.value = emptyForm();
+}
+
+function cancelForm(): void {
+  showForm.value = false;
+  form.value = emptyForm();
 }
 </script>
 
@@ -81,27 +120,44 @@ function saveForm(): void {
         <small>{{ p.host }}{{ p.port ? ":" + p.port : "" }}{{ p.tls ? " TLS" : "" }}</small>
       </button>
 
-      <button
-        v-for="c in settingsStore.connections"
-        :key="'loc-' + c.id"
-        class="card"
-        :disabled="connecting"
-        @click="connectSaved(c)"
-      >
-        <span class="src loc">ブラウザ</span>
-        <b>{{ c.name }}</b>
-        <small>{{ c.host }}{{ c.port ? ":" + c.port : "" }}</small>
-      </button>
+      <div v-for="c in settingsStore.connections" :key="'loc-' + c.id" class="card loc-card">
+        <button class="card-main" :disabled="connecting" @click="connectSaved(c)">
+          <span class="src loc">ブラウザ</span>
+          <b>{{ c.name }}</b>
+          <span v-if="c.autoSignon" title="自動サインオン">⚡</span>
+          <small>{{ c.host }}{{ c.port ? ":" + c.port : "" }}{{ c.tls ? " TLS" : "" }}</small>
+        </button>
+        <div class="card-actions">
+          <button class="icon-btn" title="編集" @click.stop="editConn(c)">✎</button>
+          <button class="icon-btn danger" title="削除" @click.stop="deleteConn(c)">🗑</button>
+        </div>
+      </div>
 
-      <button class="card add" @click="showForm = !showForm">＋ 新規接続</button>
+      <button class="card add" @click="newConn">＋ 新規接続</button>
     </div>
 
     <form v-if="showForm" class="form" @submit.prevent="saveForm">
-      <input v-model="form.name" placeholder="名称" required />
-      <input v-model="form.host" placeholder="ホスト" required />
-      <input v-model.number="form.port" type="number" placeholder="ポート (既定 23)" />
-      <input v-model.number="form.ccsid" type="number" placeholder="CCSID (既定 37)" />
-      <button type="submit">保存</button>
+      <h3>{{ form.id ? "接続を編集" : "新規接続" }}</h3>
+      <div class="row">
+        <input v-model="form.name" placeholder="名称" required />
+        <input v-model="form.host" placeholder="ホスト" required />
+      </div>
+      <div class="row">
+        <input v-model.number="form.port" type="number" placeholder="ポート (既定 23 / TLS 992)" />
+        <input v-model.number="form.ccsid" type="number" placeholder="CCSID (既定 37)" />
+        <input v-model="form.deviceName" placeholder="デバイス名 (任意)" />
+      </div>
+      <label class="check"><input v-model="form.tls" type="checkbox" /> TLS で接続</label>
+      <label class="check"><input v-model="form.autoSignon" type="checkbox" /> 自動サインオン（RFC 4777）</label>
+      <div v-if="form.autoSignon" class="row">
+        <input v-model="form.user" placeholder="ユーザー" autocomplete="off" />
+        <input v-model="form.password" type="password" placeholder="パスワード" autocomplete="off" />
+      </div>
+      <p v-if="form.autoSignon" class="note">※ 資格情報はこの端末のブラウザ（localStorage）に平文保存されます。</p>
+      <div class="row">
+        <button type="submit">保存</button>
+        <button type="button" class="ghost" @click="cancelForm">キャンセル</button>
+      </div>
     </form>
   </div>
 </template>
@@ -185,5 +241,87 @@ small {
   background: var(--accent);
   color: #fff;
   cursor: pointer;
+}
+.form h3 {
+  width: 100%;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 14px;
+}
+.form .row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  flex-wrap: wrap;
+}
+.form .row input {
+  flex: 1;
+  min-width: 120px;
+}
+.form .check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.form .check input {
+  width: auto;
+}
+.form .note {
+  width: 100%;
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.form button.ghost {
+  background: transparent;
+  color: var(--muted);
+  border-color: var(--line);
+}
+/* ブラウザ保存カード: 接続領域＋編集/削除ボタン */
+.loc-card {
+  flex-direction: row;
+  align-items: stretch;
+  padding: 0;
+  gap: 0;
+}
+.card-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 14px;
+  background: transparent;
+  border: none;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.card-actions {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--line);
+}
+.icon-btn {
+  flex: 1;
+  padding: 4px 10px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+}
+.icon-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.icon-btn.danger:hover {
+  background: color-mix(in srgb, #c62828 18%, transparent);
+  color: #c62828;
 }
 </style>

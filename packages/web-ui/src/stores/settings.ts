@@ -1,6 +1,10 @@
 import { reactive } from "vue";
 
-/** ブラウザ保存の接続設定（localStorage。**認証情報は保持しない** = spec） */
+/**
+ * ブラウザ保存の接続設定（localStorage）。
+ * autoSignon 有効時は RFC 4777 自動サインオンのため user/password を保持する
+ * （ローカルツール用途。この端末の localStorage に平文保存される点に留意）。
+ */
 export interface SavedConnection {
   id: string;
   name: string;
@@ -8,6 +12,11 @@ export interface SavedConnection {
   port?: number;
   ccsid?: number;
   deviceName?: string;
+  tls?: boolean;
+  /** 自動サインオン（RFC 4777）。有効時は user/password を使う */
+  autoSignon?: boolean;
+  user?: string;
+  password?: string;
   lastConnectedAt?: number;
 }
 

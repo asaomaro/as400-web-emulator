@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onBeforeUnmount } from "vue";
+import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from "vue";
 import type { ScreenSnapshot, Cell, Field } from "@as400web/core";
 import {
   initEdit,
@@ -16,6 +16,7 @@ import {
 } from "../composables/fieldEdit.js";
 import { acceptsChar } from "../composables/fieldValidate.js";
 import { splitLinks, type LinkPart } from "../composables/linkify.js";
+import { fitFont } from "../composables/fitFont.js";
 // codec サブパスからブラウザ安全に import（root は pino/node 依存を巻き込むため不可）
 import { katakanaChar } from "@as400web/core/codec";
 
@@ -31,6 +32,8 @@ const props = withDefaults(
     katakanaView?: boolean;
     /** 画面テキストの URL/メールをリンク化する（既定 ON。カタカナ表示中は無効） */
     linkify?: boolean;
+    /** 通信中（ホスト応答待ち）。入力欄を編集不可にしてプロテクトする */
+    busy?: boolean;
   }>(),
   { linkify: true }
 );
@@ -51,6 +54,8 @@ interface GuiChoiceLike {
 }
 interface GuiSelectionLike {
   id: number;
+  row: number;
+  col: number;
   kind: "radio" | "checkbox" | "pushbutton" | "menu";
   multiple: boolean;
   choices: GuiChoiceLike[];
@@ -185,8 +190,19 @@ const rows = computed<Segment[][]>(() => {
   return out;
 });
 
+/** フィールドの可視（単一行）桁数。複数行フィールド（コマンド行等）は可視行に収めて
+ *  入力欄が次の行へ回り込むのを防ぐ。単一行フィールドはフィールド長そのまま。 */
+function visLen(f: Field): number {
+  return Math.min(f.length, props.snapshot.cols - (f.col - 1));
+}
+
 function inputValue(f: Field): string {
-  return props.edits.get(f.index) ?? f.value;
+  const v = props.edits.get(f.index) ?? f.value;
+  // 非 hidden は欄を可視桁までスペース埋めして表示する（ACS 同様、欄内の任意桁に
+  // カーソルを置いて入力開始できる）。hidden は ● 化を避けるため埋めない。送信値は末尾トリム。
+  if (f.hidden) return v;
+  const vl = visLen(f);
+  return v.length >= vl ? v.slice(0, vl) : v.padEnd(vl, " ");
 }
 
 // ---- フィールド編集（native input 制御方式: keydown を制御して 5250 上書きモード等を実現） ----
@@ -196,22 +212,72 @@ let edit: EditState | undefined;
 let editFieldIndex = -1;
 
 function beginEdit(f: Field, inputEl: HTMLInputElement): void {
-  edit = initEdit(inputValue(f), f.length, inputEl.selectionStart ?? 0);
+  edit = initEdit(inputValue(f), visLen(f), inputEl.selectionStart ?? 0);
   edit.insertMode = insertMode.value;
   editFieldIndex = f.index;
 }
 
 function sync(inputEl: HTMLInputElement, f: Field): void {
   if (!edit) return;
-  inputEl.value = editValue(edit);
-  const c = Math.min(edit.cursor, f.length);
+  const full = editValue(edit);
+  const trimmed = full.replace(/ +$/, "");
+  // hidden（type=password）は末尾のパディング空白も ● 表示されてしまうため、表示値は実入力分のみにする。
+  // 送信値（emit）は常に末尾空白除去。sync が input を直接制御する（v-memo で :value 再描画が来ないため）。
+  inputEl.value = f.hidden ? trimmed : full;
+  const c = Math.min(edit.cursor, inputEl.value.length);
   inputEl.setSelectionRange(c, c);
   insertMode.value = edit.insertMode;
-  emit("edit", f.index, editValue(edit).replace(/ +$/, ""));
+  emit("edit", f.index, trimmed);
 }
+
+/** 画面のホストカーソル位置にある入力欄へフォーカスを当てる（無ければ先頭の入力欄）。
+ *  フォーカスにより onInputFocus が発火し beginEdit＋cursor 通知が行われる。 */
+function focusCursorField(): void {
+  if (!gridEl.value) return;
+  const snap = props.snapshot;
+  const editable = snap.fields.filter((f) => !f.protected);
+  if (editable.length === 0) return;
+  const cur = snap.cursor;
+  const idx = editable.findIndex(
+    (f) => f.row === cur.row && cur.col >= f.col && cur.col < f.col + f.length
+  );
+  const inputs = gridEl.value.querySelectorAll("input.grid-input:not([readonly])");
+  const el = inputs[idx >= 0 ? idx : 0] as HTMLInputElement | undefined;
+  if (!el) return;
+  el.focus();
+  // スペース埋め表示だと value 再設定でカーソルが末尾へ行くため、明示的に先頭へ置く
+  // （既にフォーカス済みだと focus() では onInputFocus が発火しないため）
+  el.setSelectionRange(0, 0);
+  if (edit) edit.cursor = 0;
+}
+
+// 画面遷移（新 snapshot）で編集状態をリセットし、キーボード解放時はカーソル欄へ自動フォーカス。
+// これで「同じ field index の別画面で直前のコマンドが残る」問題を防ぎ、遷移後すぐ入力できる。
+watch(
+  () => props.snapshot,
+  (snap) => {
+    edit = undefined;
+    editFieldIndex = -1;
+    if (props.focused && snap && !snap.keyboardLocked) {
+      nextTick(() => focusCursorField());
+    }
+  }
+);
+
+// このペインがフォーカスされたとき（タブ切替等）もカーソル欄へフォーカス
+watch(
+  () => props.focused,
+  (isFocused) => {
+    if (isFocused && !props.snapshot.keyboardLocked) nextTick(() => focusCursorField());
+  }
+);
 
 /** input の keydown 制御。印字文字は上書き/挿入、編集キーは 5250 挙動、AID/移動キーはペインへ委譲 */
 function onInputKeydown(f: Field, ev: KeyboardEvent): void {
+  if (props.busy) {
+    ev.preventDefault(); // 通信中は入力プロテクト
+    return;
+  }
   if (f.protected) {
     // 非入力キー（F キー等）はペインの keymap に委譲するため preventDefault しない
     if (ev.key.length === 1) ev.preventDefault();
@@ -221,6 +287,12 @@ function onInputKeydown(f: Field, ev: KeyboardEvent): void {
   const el = ev.target as HTMLInputElement;
   if (!edit || editFieldIndex !== f.index) beginEdit(f, el);
   edit = edit!;
+  // native カーソル位置（クリックや矢印での再配置）に編集カーソルを追従させる。
+  // これで ACS 同様、欄内の任意桁にカーソルを置いてそこから入力できる。
+  const nativeCaret = el.selectionStart;
+  if (nativeCaret !== null && nativeCaret !== edit.cursor) {
+    edit = { ...edit, cursor: Math.min(nativeCaret, visLen(f)) };
+  }
 
   if (ev.key === "Insert") {
     ev.preventDefault();
@@ -241,19 +313,24 @@ function onInputKeydown(f: Field, ev: KeyboardEvent): void {
     return;
   }
   if (ev.key === "Home") {
+    // 欄内はカーソルを先頭へ。ペインのフィールド移動へ伝播させない
     ev.preventDefault();
+    ev.stopPropagation();
     edit = home(edit);
     sync(el, f);
     return;
   }
   if (ev.key === "End") {
     ev.preventDefault();
+    ev.stopPropagation();
     edit = end(edit);
     sync(el, f);
     return;
   }
   if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") {
+    // 欄内カーソル移動を優先し、ペインの左右フィールド移動へは伝播させない
     ev.preventDefault();
+    ev.stopPropagation();
     edit = moveCursor(edit, ev.key === "ArrowLeft" ? -1 : 1);
     sync(el, f);
     return;
@@ -270,14 +347,19 @@ function onInputKeydown(f: Field, ev: KeyboardEvent): void {
 }
 
 function onInputFocus(f: Field, ev: FocusEvent): void {
-  beginEdit(f, ev.target as HTMLInputElement);
+  const el = ev.target as HTMLInputElement;
+  beginEdit(f, el);
+  // スペース埋め表示だと Tab/フォーカスで native カーソルが末尾へ行き入力できなくなるため、
+  // フォーカス時はフィールド先頭へ置く（クリックは mouseup で押下桁に上書きされる）。
+  el.setSelectionRange(0, 0);
+  if (edit) edit.cursor = 0;
   emit("cursor", f.row, f.col);
 }
 
 /** paste（複数文字）: 上書き/挿入で順に入力し、型・長さで整形 */
 function onInputBeforeInput(f: Field, ev: InputEvent): void {
-  if (f.protected) {
-    ev.preventDefault();
+  if (f.protected || props.busy) {
+    ev.preventDefault(); // 通信中は入力プロテクト（貼り付け含む）
     return;
   }
   if (ev.inputType === "insertFromPaste" && ev.data) {
@@ -295,9 +377,10 @@ function onCompositionEnd(f: Field, ev: CompositionEvent): void {
   const el = ev.target as HTMLInputElement;
   // IME 確定後は native input の現在値を field 値の真とみなして取り込む
   // （長さクランプ・型フィルタ・カーソルは selectionStart。旧値からの再打ち込みはしない）
-  const filtered = [...el.value.slice(0, f.length)].filter((ch) => acceptsChar(f, ch)).join("");
-  const caret = Math.min(el.selectionStart ?? filtered.length, f.length);
-  edit = initEdit(filtered, f.length, caret);
+  const vl = visLen(f);
+  const filtered = [...el.value.slice(0, vl)].filter((ch) => acceptsChar(f, ch)).join("");
+  const caret = Math.min(el.selectionStart ?? filtered.length, vl);
+  edit = initEdit(filtered, vl, caret);
   editFieldIndex = f.index;
   sync(el, f);
 }
@@ -324,10 +407,7 @@ let ro: ResizeObserver | undefined;
 function fit(): void {
   const el = gridEl.value;
   if (!el) return;
-  const w = el.clientWidth;
-  // 等幅で cols 桁が収まる字幅 ≈ w/cols。char 幅は約 0.6em なので font ≈ (w/cols)/0.6
-  const px = Math.max(6, Math.min(22, (w / props.snapshot.cols) / 0.6));
-  fontPx.value = px;
+  fontPx.value = fitFont(el.clientWidth, el.clientHeight, props.snapshot.cols, props.snapshot.rows);
 }
 
 onMounted(() => {
@@ -336,6 +416,8 @@ onMounted(() => {
     ro.observe(gridEl.value);
   }
   fit();
+  // 初期表示（接続直後の画面）でもフォーカス中ペインはカーソル欄へ
+  if (props.focused && !props.snapshot.keyboardLocked) nextTick(() => focusCursorField());
 });
 onBeforeUnmount(() => ro?.disconnect());
 </script>
@@ -409,7 +491,7 @@ onBeforeUnmount(() => ro?.disconnect());
           :value="inputValue(seg.field!)"
           :readonly="seg.field!.protected"
           :type="seg.field!.hidden ? 'password' : 'text'"
-          :maxlength="seg.field!.length"
+          :maxlength="seg.width ?? seg.field!.length"
           @keydown="onInputKeydown(seg.field!, $event)"
           @beforeinput="onInputBeforeInput(seg.field!, $event as InputEvent)"
           @focus="onInputFocus(seg.field!, $event)"
@@ -441,7 +523,8 @@ onBeforeUnmount(() => ro?.disconnect());
   background: var(--crt);
   padding: 8px 10px;
   white-space: pre;
-  overflow: auto;
+  /* フォントを幅・高さ両方にフィットさせるためスクロールバーは出さない */
+  overflow: hidden;
   min-height: 0;
   flex: 1;
 }
@@ -501,6 +584,19 @@ onBeforeUnmount(() => ro?.disconnect());
 .grid-input:focus {
   outline: none;
   background: color-mix(in srgb, var(--t-green) 12%, transparent);
+}
+/* 保護（表示専用）フィールドは編集不可。入力欄の下線・キャレット・フォーカス背景を出さない（ACS 準拠） */
+.grid-input[readonly] {
+  border-bottom-color: transparent;
+  caret-color: transparent;
+}
+.grid-input[readonly]:focus {
+  background: transparent;
+}
+/* 入力欄の下線は border-bottom（全桁）で表す。5250 の下線属性による text-decoration との
+   二重下線（太く見える）を防ぐため、input では text-decoration を無効化する（ACS 準拠の単一下線） */
+.grid-input.a-underline {
+  text-decoration: none;
 }
 
 /* ==== 拡張 5250 GUI オーバーレイ ==== */

@@ -160,6 +160,9 @@ function buildDirect(msg: {
   ccsid?: number;
   deviceName?: string;
   enhanced?: boolean;
+  tls?: boolean;
+  user?: string;
+  password?: string;
 }): OpenOptions {
   if (!msg.host) throw new Tn5250Error("CONNECT_FAILED", "host or profile required");
   const o: OpenOptions = { host: msg.host, origin: "direct" };
@@ -167,5 +170,8 @@ function buildDirect(msg: {
   if (msg.ccsid !== undefined) o.ccsid = msg.ccsid;
   if (msg.deviceName !== undefined) o.deviceName = msg.deviceName;
   if (msg.enhanced !== undefined) o.enhanced = msg.enhanced;
+  if (msg.tls === true) o.tls = true;
+  if (msg.user !== undefined) o.user = msg.user;
+  if (msg.password !== undefined) o.password = msg.password;
   return o;
 }

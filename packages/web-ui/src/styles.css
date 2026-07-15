@@ -20,7 +20,7 @@
   --t-yellow: #e8d44d;
   --t-pink: #ff8ad8;
   --t-blue: #6ea8ff;
-  --t-glow: 0 0 8px;
+  --t-glow: 0 0 3px;
 
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "BIZ UDGothic", "Noto Sans Mono CJK JP", monospace;
   --sans: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;

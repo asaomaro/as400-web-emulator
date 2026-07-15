@@ -374,11 +374,18 @@ export class ScreenBuffer {
 
   snapshot(sessionId: string, keyboardLocked: boolean): ScreenSnapshot {
     const cells: Cell[][] = [];
+    // フィールド属性はフィールド長で境界付ける（ACS 準拠）。閉じ属性を送らないアプリ（PDM 等）で
+    // 下線・カラー等の属性がフィールドを越えて非編集エリアへ漏れるのを防ぐため、フィールド終端
+    // （startAddr+length）に明示属性が無ければ既定属性へ戻す。
+    const fieldEnds = new Set<number>();
+    for (const f of this.fields) fieldEnds.add(f.startAddr + f.length);
     let attr = DEFAULT_ATTR;
     for (let r = 0; r < this.rows; r++) {
       const rowCells: Cell[] = [];
       for (let c = 0; c < this.cols; c++) {
-        const cell = this.cells[r * this.cols + c];
+        const addr = r * this.cols + c;
+        const cell = this.cells[addr];
+        if (cell?.type !== "attr" && fieldEnds.has(addr)) attr = DEFAULT_ATTR;
         if (cell?.type === "attr") {
           attr = decodeAttribute(cell.byte);
           rowCells.push({

@@ -95,4 +95,22 @@ describe("settingsStore", () => {
     settingsStore.remove(c.id);
     expect(settingsStore.connections).toHaveLength(0);
   });
+
+  it("自動サインオン有効時は user/password を保持し、更新でも維持される", () => {
+    const c = settingsStore.save({
+      name: "pub", host: "pub400.com", port: 23, tls: false,
+      autoSignon: true, user: "MARO", password: "secret"
+    });
+    expect(c.autoSignon).toBe(true);
+    expect(c.user).toBe("MARO");
+    expect(c.password).toBe("secret");
+    // 更新（編集）で他項目を変えても資格情報は維持
+    const u = settingsStore.save({ id: c.id, name: "pub2", host: "pub400.com", autoSignon: true, user: "MARO", password: "secret" });
+    expect(u.name).toBe("pub2");
+    expect(u.password).toBe("secret");
+    // localStorage 永続化にも含まれる
+    if (typeof localStorage !== "undefined") {
+      expect(localStorage.getItem("as400.connections")).toContain("MARO");
+    }
+  });
 });

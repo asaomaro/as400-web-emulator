@@ -13,6 +13,10 @@ export interface SessionState {
   readOnly: boolean;
   client: WsClient;
   job?: { number: string; user: string; name: string };
+  /** ホスト応答待ち（通信中）。入力をプロテクトする */
+  busy?: boolean;
+  /** ローディング表示（通信が 0.5 秒以上かかったとき） */
+  loading?: boolean;
 }
 
 export const sessionsStore = reactive({

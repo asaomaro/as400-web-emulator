@@ -6,7 +6,9 @@ export default tseslint.config(
       "**/dist/**",
       "**/node_modules/**",
       "packages/core/src/codec/tables/**",
-      "packages/web-ui/**"
+      "packages/web-ui/**",
+      // Electron ランタイム（CommonJS）は TS eslint 対象外
+      "electron/**"
     ]
   },
   ...tseslint.configs.recommended,

@@ -11,6 +11,10 @@ export interface WsOpen {
   ccsid?: number;
   deviceName?: string;
   enhanced?: boolean;
+  tls?: boolean;
+  /** RFC 4777 自動サインオン（host 直指定時。profile 指定時は profile 側の signon を使う） */
+  user?: string;
+  password?: string;
   readOnly?: boolean;
 }
 export interface WsKey {
