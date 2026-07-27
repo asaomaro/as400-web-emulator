@@ -1,5 +1,5 @@
 import { As400Error } from "../errors.js";
-import { type Codec, SO, SI } from "../codec/codec.js";
+import { type Codec, SO, SI } from "@as400web/ebcdic";
 import type { ScreenBuffer } from "../screen/buffer.js";
 import { ByteReader } from "./bytes.js";
 import { ESC, COMMAND, ORDER, isAttribute } from "./constants.js";
@@ -333,6 +333,12 @@ function applyWdsf(
       break;
     case "remove-all":
       buf.clearGui();
+      break;
+    case "grid-lines":
+      buf.applyGridLines(event.grid);
+      break;
+    case "clear-grid-lines":
+      buf.clearGridLines();
       break;
     case "unknown":
       warn(`unhandled WDSF type 0x${event.type.toString(16)} — ignored`);

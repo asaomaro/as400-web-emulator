@@ -151,3 +151,76 @@ describe("dbcsViewLayout.sliceRange: 折返し境界にまたがる全角の桁�
     expect(dbcsViewLayout("あい").columns).toBe(dbcsByteLength("あい"));
   });
 });
+
+/**
+ * **センチネルは送信バイト 1 つぶん。**
+ *
+ * 埋め込み属性・表示できない SBCS バイトは私用面のセンチネル（U+E000–E0FF）として
+ * 値の中を動く。`isFullWidth` は**私用領域を外字＝全角として含む**ので、素直に幅で数えると
+ * センチネルを「SO ＋ 2 バイト ＋ SI」と勘定して長さ予算が壊れる。
+ * センチネルが運ぶのは 1 バイトなので 1 と数えるのが正しい。
+ */
+describe("dbcsByteLength とセンチネル", () => {
+  const ATTR_SENT = String.fromCharCode(0xe028); // 属性 0x28
+  const RAW_SENT = String.fromCharCode(0xe0ff); // 生バイト 0xFF
+
+  it("属性センチネルは 1 バイト", () => {
+    expect(dbcsByteLength(ATTR_SENT)).toBe(1);
+  });
+
+  it("生バイトセンチネルは 1 バイト", () => {
+    expect(dbcsByteLength(RAW_SENT)).toBe(1);
+  });
+
+  it("センチネル混じりでも SBCS 分と足し合わせた長さになる", () => {
+    expect(dbcsByteLength("AB" + ATTR_SENT + "CD")).toBe(5);
+  });
+
+  it("センチネルは DBCS ランを分断する（SI で閉じ、属性バイト、SO で開き直す）", () => {
+    // 全角 2 文字が 1 ラン: SO + 2 + 2 + SI = 6
+    expect(dbcsByteLength("設計")).toBe(6);
+    // 間に属性が入ると SBCS モードへ戻る必要がある:
+    // SO+設(2)+SI = 4、属性 1、SO+計(2)+SI = 4 → 計 9。
+    // これは core の read-response が flushRun でランを分けて encode するのと同じ数え方
+    // （属性は SBCS モードの 1 バイトなので、全角の間では SI/SO を挟むのが正しい）。
+    expect(dbcsByteLength("設" + ATTR_SENT + "計")).toBe(9);
+  });
+});
+
+/**
+ * **列ビューでセンチネルを全角扱いしない。**
+ *
+ * `isFullWidth` は私用領域（U+E000–F8FF）を外字＝全角として含むが、
+ * センチネルも私用領域に居る。列ビュー構築でこれを全角とみなすと
+ *   - センチネルの前に SO が入り、`{` の桁が本来より前へずれる
+ *   - センチネル自体が描画されて**制御コードが豆腐で見える**
+ * という実機報告どおりの壊れ方をする（PR #173/#174 で DBCS 欄の論理値に
+ * センチネルが載るようになった副作用）。
+ */
+describe("列ビューとセンチネル", () => {
+  const ATTR = String.fromCharCode(0xe028); // 属性 0x28
+
+  it("センチネルの前後に SO/SI を入れない", () => {
+    // A X [属性] 設計 C D → 属性は SBCS なので SO は全角の直前に来る
+    const v = columnView("AX" + ATTR + "設計CD", "{", "}");
+    expect(v).toBe("AX {設計}CD");
+  });
+
+  it("センチネルは空白 1 桁として列ビューに出る（制御コードを見せない）", () => {
+    const v = columnView("AX" + ATTR + "CD", "{", "}");
+    expect(v).toBe("AX CD");
+    expect(v).not.toContain(ATTR);
+  });
+
+  it("dbcsViewLayout でも桁と SO/SI の位置が同じ", () => {
+    const lay = dbcsViewLayout("AX" + ATTR + "設計CD", "{", "}");
+    expect(lay.view).toBe("AX {設計}CD");
+    expect(lay.view).not.toContain(ATTR);
+    // 桁数: A X 属性 { 設 計 } C D = 1+1+1+1+2+2+1+1+1 = 11
+    expect(lay.columns).toBe(11);
+  });
+
+  it("センチネルが無い場合は従来どおり", () => {
+    expect(columnView("AB設計CD", "{", "}")).toBe("AB{設計}CD");
+  });
+});

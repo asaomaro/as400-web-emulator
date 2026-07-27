@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
-# AS400 5250 エミュレーター — Electron デスクトップ版 起動（Linux / macOS / WSL）
-#   ワークスペース依存 → ビルド（core/server + web-ui）→ Electron 依存 → Electron 起動。
+# AS400 5250 エミュレーター — Electron デスクトップ版 exe 生成（Linux / macOS / WSL）
+#   ワークスペース依存 → ビルド（core/server + web-ui）→ Electron 依存 → exe（インストーラ）生成。
 #
 # 使い方:
-#   ./electron.sh            # 未ビルドなら自動ビルドして起動
-#   ./electron.sh --build    # 強制再ビルド
+#   ./electron.sh            # 未ビルドなら自動ビルドしてから exe（インストーラ）を生成
+#   ./electron.sh --build    # 強制再ビルドしてから exe（インストーラ）を生成
 #
-# パッケージング（インストーラ生成）は:
-#   npm run build && npm run build -w @as400web/web-ui
-#   cd electron && npm install && npm run dist    # electron-builder（要 GUI/対象 OS）
+# 生成物（インストーラ）は electron/dist/ に出力されます。
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -17,8 +15,10 @@ FORCE_BUILD=0
 
 command -v node >/dev/null 2>&1 || { echo "Node.js (>=20) が必要です" >&2; exit 1; }
 
-# ワークスペース依存
-if [ ! -d node_modules ]; then
+# ワークスペース依存（未取得時 or ロックファイルが node_modules より新しいとき）。
+# 「node_modules があるか」だけでは、ワークスペースが増えた版を pull したときに
+# 新パッケージのリンクが無いまま進んでビルドが落ちる（start.sh と同じ理由。同じ判定にする）。
+if [ ! -d node_modules ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then
   echo "==> npm install"
   npm install
 fi
@@ -37,6 +37,7 @@ if [ ! -d electron/node_modules ]; then
   ( cd electron && npm install )
 fi
 
-echo "==> Electron 起動"
+echo "==> exe 生成（electron-builder）"
 cd electron
-exec npm start
+npm run dist
+echo "==> 完了。インストーラは electron/dist/ にあります"

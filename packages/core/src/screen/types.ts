@@ -67,17 +67,79 @@ export interface GuiSelectionField {
   choices: GuiChoice[];
 }
 
+/** WDWTITLE の見出し／脚注（枠の辺に載る） */
+export interface GuiWindowTitle {
+  text: string;
+  /** 辺に沿った寄せ方（既定は中央。ACS も中央に出す） */
+  align: "center" | "left" | "right";
+  /** true なら窓の下辺に出る脚注 */
+  footer: boolean;
+  /** カラー用の属性バイト */
+  cba: number;
+}
+
 export interface GuiWindow {
   id: number;
   row: number;
   col: number;
   width: number;
   height: number;
-  title?: string;
+  /** ホストが WDWTITLE で指定した見出し／脚注 */
+  title?: GuiWindowTitle;
   /** カーソルをウィンドウ内に制限 */
   restrictCursor: boolean;
   /** プルダウンウィンドウ */
   pulldown: boolean;
+  /**
+   * ホストが WDWBORDER で指定した枠。**無ければクライアント設定の枠を使う**
+   * （ホスト指定があるならそちらが「実機と同じ見た目」なので優先する）。
+   */
+  border?: GuiWindowBorder;
+}
+
+/** WDWBORDER の罫線文字（8 隅・辺）。デコード済みの 1 文字 */
+export interface GuiWindowBorderChars {
+  ulbc: string;
+  tbc: string;
+  urbc: string;
+  lbc: string;
+  rbc: string;
+  llbc: string;
+  bbc: string;
+  lrbc: string;
+}
+
+/** WDWBORDER が指定した枠。**色だけの指定なら `chars` は無い**（実機で確認） */
+export interface GuiWindowBorder {
+  /** カラー用の属性バイト（decodeAttribute で色に落とす） */
+  cba: number;
+  chars?: GuiWindowBorderChars;
+}
+
+/**
+ * グリッド罫線（DDS の GRDATR / GRDLIN）。
+ * ホストは「箱」や「片側の線」を指定し、内部の等間隔罫線も指定できる。
+ */
+export interface GuiGridLine {
+  id: number;
+  /** GRID_MINOR の値（0x00 上辺 … 0x07 縦横罫線付きの箱） */
+  minorType: number;
+  /** 1 始まり */
+  row: number;
+  col: number;
+  width: number;
+  height: number;
+  /** 線種（GRID_LINE_STYLE） */
+  lineStyle: number;
+  /** 色（属性バイト。0 なら既定色） */
+  color: number;
+  /**
+   * DDS `*TYPE` の後ろの 2 つの数値。**意味は minorType で変わる**
+   * （単独罫線 0x00–0x03 は「繰り返し本数・間隔」、箱 0x04–0x07 は「横罫の行間隔・縦罫の桁間隔」）。
+   * 詳細は `ParsedGridItem` の表を参照。
+   */
+  value1: number;
+  value2: number;
 }
 
 export interface GuiScrollBar {
@@ -98,6 +160,8 @@ export interface GuiConstructs {
   selectionFields: GuiSelectionField[];
   windows: GuiWindow[];
   scrollBars: GuiScrollBar[];
+  /** グリッド罫線（GRDATR / GRDLIN）。ホストが引いた線をそのまま持つ */
+  gridLines: GuiGridLine[];
 }
 
 export interface ScreenSnapshot {

@@ -1,14 +1,19 @@
 @echo off
-rem AS400 5250 Web エミュレーター起動スクリプト（Windows）
-rem   HTTP サーバーを起動し、ビルド済み Web UI を配信する。ブラウザで http://localhost:<port> を開く。
+rem Keep this file ASCII-only: cmd.exe on a cp932 console mis-parses multibyte
+rem (UTF-8) bytes in .bat files, which turns comment lines into stray commands.
+rem chcp 65001 only fixes DISPLAY of the child process (node) UTF-8 output below.
+chcp 65001 >nul
+rem AS400 5250 Web emulator launcher (Windows)
+rem   Starts the HTTP server and serves the pre-built Web UI.
+rem   Open http://localhost:<port> in a browser.
 rem
-rem 使い方:
-rem   start.bat                        既定ポート 3400 で起動（未ビルドなら自動ビルド）
-rem   start.bat --port 8080            ポート指定
-rem   start.bat --build                強制再ビルド
-rem   start.bat --profiles path.json   接続プロファイル指定（既定は profiles.local.json / profiles.json 自動検出）
+rem Usage:
+rem   start.bat                        default port 3400 (auto-build if not built)
+rem   start.bat --port 8080            specify port
+rem   start.bat --build                force rebuild
+rem   start.bat --profiles path.json   connection profiles (auto: profiles.local.json / profiles.json)
 rem
-rem   MCP を stdio で使う場合:
+rem   Use MCP over stdio:
 rem     node packages\server\dist\main.js --stdio --profiles profiles.local.json
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
@@ -33,32 +38,47 @@ exit /b 0
 
 where node >nul 2>nul
 if errorlevel 1 (
-  echo Node.js ^(^>=20^) が必要です 1>&2
+  echo Node.js ^(^>=20^) is required 1>&2
   exit /b 1
 )
 
-rem 依存インストール（未取得時のみ）
-if not exist node_modules (
+rem Install dependencies (when missing, or when the lockfile is newer than node_modules).
+rem
+rem Checking only for node_modules is not enough: pulling a revision that adds a workspace
+rem leaves the old node_modules in place without a link for the new package, and the build
+rem then fails with "Cannot find module '@as400web/...'" (this actually happened when
+rem packages/ebcdic and packages/scs were added). npm rewrites node_modules/.package-lock.json
+rem on every install, so a newer package-lock.json means the tree is stale.
+rem PowerShell is used only for the timestamp comparison (present on every supported Windows).
+set "DEPS_STALE="
+if not exist node_modules set "DEPS_STALE=1"
+if not exist node_modules\.package-lock.json set "DEPS_STALE=1"
+rem Kept on one line on purpose: a "^" continuation inside for /f is a common batch pitfall.
+rem The expression uses -gt (not ">") so cmd does not treat it as a redirection.
+if not defined DEPS_STALE (
+  for /f %%s in ('powershell -NoProfile -Command "if ((Get-Item package-lock.json).LastWriteTimeUtc -gt (Get-Item node_modules/.package-lock.json).LastWriteTimeUtc) { 1 } else { 0 }"') do if "%%s"=="1" set "DEPS_STALE=1"
+)
+if defined DEPS_STALE (
   echo ==^> npm install
   call npm install
 )
 
-rem ビルド判定
+rem Decide whether a build is needed
 set "NEED_BUILD=%FORCE_BUILD%"
 if not exist packages\server\dist\main.js set "NEED_BUILD=1"
 if not exist packages\web-ui\dist\index.html set "NEED_BUILD=1"
 if "%NEED_BUILD%"=="1" (
-  echo ==^> ビルド（core / server）
+  echo ==^> build ^(core / server^)
   call npm run build
-  echo ==^> ビルド（web-ui / Vite）
+  echo ==^> build ^(web-ui / Vite^)
   call npm run build -w @as400web/web-ui
 )
 
-rem 接続プロファイルの自動検出（未指定時）
+rem Auto-detect connection profiles (when not specified)
 if "%PROFILES%"=="" if exist profiles.local.json set "PROFILES=profiles.local.json"
 if "%PROFILES%"=="" if exist profiles.json set "PROFILES=profiles.json"
 
-rem .env があれば読み込む（Node 20.6+ の --env-file）
+rem Load .env if present (Node 20.6+ --env-file)
 set "ENVFILE="
 if exist .env set "ENVFILE=--env-file=.env"
 
@@ -68,6 +88,6 @@ if not "%PROFILES%"=="" (
   echo ==^> profiles: %PROFILES%
 )
 
-echo ==^> 起動: http://localhost:%PORT%  ^(停止は Ctrl+C^)
+echo ==^> starting: http://localhost:%PORT%  ^(Ctrl+C to stop^)
 node %ENVFILE% packages\server\dist\main.js %ARGS%
 endlocal

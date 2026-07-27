@@ -1,7 +1,9 @@
 import { As400Error } from "../errors.js";
 import { FFW } from "../protocol/constants.js";
+import { GRID_DEFAULT } from "../protocol/wdsf-parser.js";
 import type {
   ParsedScrollBar,
+  ParsedGridLines,
   ParsedSelectionField,
   ParsedWindow
 } from "../protocol/wdsf-parser.js";
@@ -19,6 +21,7 @@ import type {
   Field,
   GuiConstructs,
   GuiScrollBar,
+  GuiGridLine,
   GuiSelectionField,
   GuiWindow,
   ScreenSnapshot
@@ -85,6 +88,7 @@ export class ScreenBuffer {
   private guiSelections: GuiSelectionField[] = [];
   private guiWindows: GuiWindow[] = [];
   private guiScrollBars: GuiScrollBar[] = [];
+  private guiGridLines: GuiGridLine[] = [];
   private guiIdSeq = 0;
   /** 代替（ワイド）画面の許可サイズ。CLEAR UNIT ALTERNATE で切替える（27x132 端末のみ） */
   private readonly alternate: { rows: 27; cols: 132 } | undefined;
@@ -114,6 +118,7 @@ export class ScreenBuffer {
     this.guiSelections = [];
     this.guiWindows = [];
     this.guiScrollBars = [];
+    this.guiGridLines = [];
   }
 
   /** DEFINE SELECTION FIELD を GUI 選択フィールドとして登録（位置は 1 始まり row/col） */
@@ -151,7 +156,80 @@ export class ScreenBuffer {
       pulldown: parsed.pulldown
     };
     if (parsed.title !== undefined) win.title = parsed.title;
+    // ホストが WDWBORDER で枠を指定していれば持ち回す（無ければクライアント設定の枠）
+    if (parsed.border !== undefined) {
+      const b = parsed.border;
+      win.border = { cba: b.cba, ...(b.chars !== undefined ? { chars: { ...b.chars } } : {}) };
+    }
     this.guiWindows.push(win);
+    this.blankWindowArea(win);
+  }
+
+  /**
+   * **窓が占める範囲を空白にする。**
+   *
+   * ホストは窓の下地を消す指示を**送ってこない**（SR-OSAKA で確認: 背景を書いた後に
+   * CREATE WINDOW と窓の中身だけを送る）。消すのは表示装置の仕事で、これをやらないと
+   * **窓の中に下の画面が透ける**。実際、背景いっぱいに文字を書いた画面に窓を出すと
+   * 窓の中に背景文字が残った（利用者からの報告と同じ症状）。
+   *
+   * 範囲は枠の矩形（行 `row`〜`row+height+1` / 桁 `col+1`〜`col+width+4`）に、
+   * 枠の属性バイトが入る 1 桁（`col`）を足したもの。5250 では属性もセルを 1 つ占めるため、
+   * この桁に下地の文字が残ることはない。
+   *
+   * **消した下地は取っておかない。** 窓を閉じるとき、ホストは
+   * RESTORE SCREEN（ESC 0x12）で**画面をまるごと送り直してくる**（実機 GRIDCL7 で確認。
+   * 窓を出す前に SAVE SCREEN（ESC 0x02）を送っているのはこのため）。
+   * こちらで下地を持って戻すと、ホストが書き直した内容を古い下地で上書きしかねない。
+   */
+  private blankWindowArea(win: GuiWindow): void {
+    const rowEnd = Math.min(this.rows, win.row + win.height + 1);
+    const colEnd = Math.min(this.cols, win.col + win.width + 4);
+    for (let row = Math.max(1, win.row); row <= rowEnd; row++) {
+      for (let col = Math.max(1, win.col); col <= colEnd; col++) {
+        this.cells[(row - 1) * this.cols + (col - 1)] = null;
+      }
+    }
+  }
+
+  /**
+   * DRAW/ERASE GRID LINES を適用する。
+   *
+   * `clearBuffer`（主構造 flag1 bit0）と各項目の `erase`（ms_flag1 bit0）で
+   * 描画・消去を切り替える。消去は**同じ位置・同じ種別**の項目を取り除く
+   * （ホストは引いたときと同じ指定で消しに来るため）。
+   */
+  applyGridLines(parsed: ParsedGridLines): void {
+    if (parsed.clearBuffer) this.guiGridLines = [];
+    for (const it of parsed.items) {
+      const samePlace = (g: GuiGridLine): boolean =>
+        g.row === it.row && g.col === it.col && g.minorType === it.minorType;
+      if (it.erase) {
+        this.guiGridLines = this.guiGridLines.filter((g) => !samePlace(g));
+        continue;
+      }
+      // 同じ場所への再描画は置き換える（線種・色の変更を反映するため）
+      this.guiGridLines = this.guiGridLines.filter((g) => !samePlace(g));
+      this.guiGridLines.push({
+        id: ++this.guiIdSeq,
+        minorType: it.minorType,
+        row: it.row,
+        col: it.col,
+        width: it.width,
+        height: it.height,
+        // **0xFF は「表示装置の既定」**（DDS リファレンス Table 14/15 の NONE）。
+        // 項目が既定を指していれば主構造の値へ、主構造も既定なら実線・白へ倒す。
+        lineStyle: it.lineStyle !== GRID_DEFAULT ? it.lineStyle : parsed.defaultLine,
+        color: it.color !== GRID_DEFAULT ? it.color : parsed.defaultColor,
+        value1: it.value1,
+        value2: it.value2
+      });
+    }
+  }
+
+  /** CLEAR GRID LINE BUFFER（0x61） */
+  clearGridLines(): void {
+    this.guiGridLines = [];
   }
 
   /** DEFINE SCROLL BAR FIELD を GUI スクロールバーとして登録 */
@@ -229,6 +307,7 @@ export class ScreenBuffer {
     guiSelections: GuiSelectionField[];
     guiWindows: GuiWindow[];
     guiScrollBars: GuiScrollBar[];
+    guiGridLines: GuiGridLine[];
   }[] = [];
 
   /** CLEAR UNIT: 既定サイズ（24x80）でクリア */
@@ -262,7 +341,8 @@ export class ScreenBuffer {
       retainedEnds: new Set(this.retainedEnds),
       guiSelections: this.guiSelections.map((s) => ({ ...s, choices: s.choices.map((c) => ({ ...c })) })),
       guiWindows: this.guiWindows.map((w) => ({ ...w })),
-      guiScrollBars: this.guiScrollBars.map((b) => ({ ...b }))
+      guiScrollBars: this.guiScrollBars.map((b) => ({ ...b })),
+      guiGridLines: this.guiGridLines.map((g) => ({ ...g }))
     });
   }
 
@@ -279,6 +359,7 @@ export class ScreenBuffer {
     this.guiSelections = saved.guiSelections;
     this.guiWindows = saved.guiWindows;
     this.guiScrollBars = saved.guiScrollBars;
+    this.guiGridLines = saved.guiGridLines;
     return true;
   }
 
@@ -449,17 +530,29 @@ export class ScreenBuffer {
     }
     // **SBCS 欄の埋め込み属性はセンチネル文字で返す**（値の中で識別・移動できるように）。
     // DBCS 欄は SO/SI・2 バイトの都合でセンチネルを混ぜると送信エンコードが壊れるため空白のまま。
-    const dbcs = field.dbcsType !== undefined;
+    // **DBCS 欄かどうかでの分岐はもう無い。** 属性も生バイトもセンチネルで返し、
+    // 送信側（read-response）が生バイト 1 つとして書き戻す——これが round-trip の要。
     let s = "";
     for (let i = 0; i < field.length; i++) {
       const c = this.cells[field.startAddr + i];
       if (c?.type === "char") {
-        // **表示できないバイトもセンチネルで返す**。U+FFFD のまま返すと、その欄を編集して
-        // 送信した時点でエンコード不能となり SUB（0x3F）に化けて元のデータを壊す。
-        s += !dbcs && c.char === UNDISPLAYABLE && c.rawByte !== undefined
+        // **表示できないバイトもセンチネルで返す（DBCS 欄も同じ）**。U+FFFD のまま返すと、
+        // その欄を編集して送信した時点でエンコード不能となり SUB（0x3F）に化けて元のデータを壊す。
+        //
+        // **DBCS 欄を除外してはいけない。** 編集後の DBCS 欄は `setFieldValue` によって
+        // 全セルが「生バイトを持つ SBCS セル」になっており（構造セルが無いのでここへ来る）、
+        // 除外すると SO/SI・全角のバイトがそろって U+FFFD → SUB に化ける。
+        // 実機の SEU（ASAOLIB/QJPNTEST）で確認: `AB<attr>SO 設通 SI CD` を 1 文字編集して
+        // 保存すると `3F E7 28 3F 3F …` になり、**日本語が全部潰れた**。
+        s += c.char === UNDISPLAYABLE && c.rawByte !== undefined
           ? rawSentinel(c.rawByte)
           : c.char;
-      } else if (c?.type === "attr") s += dbcs ? " " : attrSentinel(c.byte);
+      // **埋め込み属性はセンチネルで返す（DBCS 欄も同じ）。**
+      // 空白で返すと `setFieldValue` の書き戻しでただの文字セルに潰され、
+      // 送信データからも制御コードが落ちる＝**利用者のソースが書き換わる**。
+      // 送信側（read-response）はセンチネルを生バイト 1 つとして書き、前後を別 run で
+      // encode するので、DBCS 欄でも SO/SI の整合は保たれる（属性は SBCS モードの 1 バイト）。
+      } else if (c?.type === "attr") s += attrSentinel(c.byte);
       else s += " ";
     }
     return s.replace(/ +$/, "");
@@ -575,6 +668,9 @@ export class ScreenBuffer {
           rowCells.push({
             char: " ",
             kind: "attr",
+            // **属性バイトを載せる。** これが無いと web-ui が編集の種値を作るときに
+            // 属性をセンチネルへ戻せず、桁を空白で潰してしまう（logicalFromCells）。
+            rawByte: cell.byte,
             color: attr.color,
             reverse: false,
             underline: false,
@@ -655,7 +751,8 @@ export class ScreenBuffer {
     if (
       this.guiSelections.length === 0 &&
       this.guiWindows.length === 0 &&
-      this.guiScrollBars.length === 0
+      this.guiScrollBars.length === 0 &&
+      this.guiGridLines.length === 0
     ) {
       return undefined;
     }
@@ -665,7 +762,8 @@ export class ScreenBuffer {
         choices: s.choices.map((c) => ({ ...c }))
       })),
       windows: this.guiWindows.map((w) => ({ ...w })),
-      scrollBars: this.guiScrollBars.map((b) => ({ ...b }))
+      scrollBars: this.guiScrollBars.map((b) => ({ ...b })),
+      gridLines: this.guiGridLines.map((g) => ({ ...g }))
     };
   }
 

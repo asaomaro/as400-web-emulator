@@ -17,6 +17,7 @@ export {
   type PublicSystem,
   type PublicSession,
   type PrinterConfig,
+  type Watermark,
   type ConfigSource
 } from "./config-types.js";
 export {
@@ -25,7 +26,18 @@ export {
   type LegacyProfile,
   type LegacyConnection
 } from "./config-migrate.js";
-export { screenToText, type FormatOptions } from "./format.js";
+export { MacroStore, toPublic as macroToPublic } from "./macro-store.js";
+export { registerMacroRoutes, type MacroRouteDeps } from "./macro-routes.js";
+export type {
+  ScreenMatch,
+  MacroRecord,
+  MacroStepRecord,
+  PublicMacro,
+  PublicMacroStep,
+  MacroSecretRef,
+  CreateMacroBody
+} from "./macro-types.js";
+export { screenToText, screenToAnsi, attributeRuns, type FormatOptions, type AttrRun } from "./format.js";
 export { fieldSignon } from "./signon.js";
 export { audit, withAudit, setAuditSink, type AuditEvent } from "./audit.js";
 export { registerTools, type ToolDeps } from "./mcp-tools.js";
@@ -37,6 +49,8 @@ export type {
   WsServerMessage,
   WsOpen,
   WsKey,
+  WsKeyField,
+  WsFieldRef,
   WsCloseReq,
   WsOpened,
   WsScreen,

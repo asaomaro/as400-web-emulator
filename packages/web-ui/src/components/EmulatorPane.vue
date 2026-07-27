@@ -1,17 +1,21 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import type { AidKey } from "@as400web/core";
+import type { AidKey, ScreenSnapshot } from "@as400web/core";
 import ScreenGrid from "./ScreenGrid.vue";
 import StatusBar from "./StatusBar.vue";
 import LogPanel from "./LogPanel.vue";
 import SysReqLine from "./SysReqLine.vue";
+import WatermarkOverlay from "./WatermarkOverlay.vue";
 import { viewSettings } from "../stores/viewSettings.js";
 import { screenFontStack } from "../composables/screenFonts.js";
 import { logStore } from "../stores/log.js";
 import { sessionsStore } from "../stores/sessions.js";
+import { systemsStore } from "../stores/systems.js";
+import { resolveWatermark } from "../composables/watermark.js";
 import { makeKeydownHandler, type LocalAction } from "../composables/useKeymap.js";
-import { moveCursor, fieldAt, caretInField, roundToDbcsLead, nextWordStart, type Dir } from "../composables/useCursor.js";
+import { moveCursor, fieldAt, caretInField, roundToDbcsLead, nextWordStart, type Dir, type CursorBounds } from "../composables/useCursor.js";
 import { sendKey, selectGuiChoice, submitGuiSelection } from "../session-controller.js";
+import { play } from "../macro-engine.js";
 import { isKatakanaCcsid } from "../hostCodePages.js";
 import { MSG_PROTECTED } from "../composables/opMessages.js";
 import { fieldSlices, fieldSpan, posOfOffset } from "../composables/fieldSlices.js";
@@ -31,6 +35,32 @@ const paneEl = ref<HTMLElement | null>(null);
 
 const state = computed(() => sessionsStore.get(props.sessionId));
 const snapshot = computed(() => state.value?.snapshot);
+
+/**
+ * ウォーターマーク（画面に重ねる透かし）。
+ *
+ * 設定は**セッション設定を直に引く**（接続時にコピーを持ち回らない）。表示だけの設定なので
+ * ホストへ渡す必要がなく、設定を保存した瞬間に開いているセッションへも反映される。
+ * 直接指定で開いたセッション（`configRef` なし）は設定が無い＝透かしも出ない。
+ */
+const watermarkConfig = computed(() => {
+  const cfgRef = state.value?.configRef;
+  return cfgRef ? systemsStore.sessions.find((s) => s.ref === cfgRef)?.watermark : undefined;
+});
+const watermark = computed(() => {
+  const s = state.value;
+  if (!s) return undefined;
+  // 装置名・ユーザーは**実際に割り当てられた値**（ジョブ）を優先する。
+  // ホスト採番や手サインオンでは設定値と食い違い、設定値の方は嘘になる
+  return resolveWatermark(watermarkConfig.value, {
+    host: s.meta?.host,
+    port: s.meta?.port !== undefined ? String(s.meta.port) : undefined,
+    system: systemsStore.systems.find((x) => x.ref === s.systemRef)?.name,
+    session: s.label,
+    device: s.job?.name ?? s.meta?.deviceName,
+    user: s.job?.user ?? s.meta?.signonUser
+  });
+});
 // 通信中（ホスト応答待ち）は入力プロテクト。loading は 0.5 秒超でスピナー表示
 const busy = computed(() => state.value?.busy ?? false);
 const loading = computed(() => state.value?.loading ?? false);
@@ -118,15 +148,39 @@ function reconcileFocus(pos: { row: number; col: number }): void {
   }
 }
 
+/**
+ * カーソルキーが動ける範囲。
+ *
+ * ホストが「カーソルを窓に閉じ込める」と宣言した窓（CREATE WINDOW の flag1 bit0x80 =
+ * `restrictCursor`）の**中に居るときだけ**その窓に閉じ込める。外に居るときは画面全体
+ * ——窓の外から矢印で入ってくるのは妨げない。
+ *
+ * 対象は**ホストが宣言した窓だけ**。文字や反転で描かれた窓はこちらの推測で見つけている
+ * ものなので、外したときにカーソルが理由もなく閉じ込められる。
+ */
+function cursorBounds(snap: ScreenSnapshot): CursorBounds {
+  const screen = { row1: 1, row2: snap.rows, col1: 1, col2: snap.cols };
+  const wins = (snap.gui?.windows ?? []).filter((w) => w.restrictCursor);
+  const w = wins[wins.length - 1];
+  if (!w) return screen;
+  // 窓の中身の範囲（ホストが送る位置は枠の左上で、中身はその 1 行下・3 桁右から）
+  const inner = { row1: w.row + 1, row2: w.row + w.height, col1: w.col + 3, col2: w.col + w.width + 2 };
+  const { row, col } = cursor.value;
+  const inside = row >= inner.row1 && row <= inner.row2 && col >= inner.col1 && col <= inner.col2;
+  return inside ? inner : screen;
+}
+
 /** 矢印で有効カーソルを 1 セル移動し、着地セルでモード調停する（onCursor 経由） */
 function moveCell(dir: Dir): void {
   const snap = snapshot.value;
   if (!snap) return;
-  let next = moveCursor(cursor.value, dir, snap.rows, snap.cols);
+  // 端では反対側へ回り込む（5250 端末の矢印。最下行で ↓ は最上行へ）
+  const opts = { bounds: cursorBounds(snap), wrap: true };
+  let next = moveCursor(cursor.value, dir, snap.rows, snap.cols, opts);
   // DBCS（全角 2 桁）の桁間には止めない。右移動は tail を飛び越え、左/上/下・位置確定は lead へ丸める
   // （一律丸めだと lead で右が tail→lead に戻され進めない。review R1-2）。
   if (snap.cells[next.row - 1]?.[next.col - 1]?.kind === "dbcs-tail") {
-    next = dir === "right" ? moveCursor(next, "right", snap.rows, snap.cols) : roundToDbcsLead(next, snap.cells);
+    next = dir === "right" ? moveCursor(next, "right", snap.rows, snap.cols, opts) : roundToDbcsLead(next, snap.cells);
   }
   onCursor(next.row, next.col);
 }
@@ -383,10 +437,17 @@ watch(
   }
 );
 
+/** キー設定で割り当てたマクロを再生する（ホストへは送らない。spec D10） */
+function onPlayMacro(macroId: string): void {
+  notice.value = "";
+  play(props.sessionId, macroId);
+}
+
 const rawKeydown = makeKeydownHandler({
   sendAid: onAid,
   local: onLocal,
   viewCycle: onViewCycle,
+  playMacro: onPlayMacro,
   isFocused: () => props.focused
 });
 
@@ -705,6 +766,11 @@ function onWheel(ev: WheelEvent): void {
         @aid="onFkeyAid"
       />
       <div v-else class="pane-empty">接続待ち…</div>
+      <!--
+        ウォーターマーク（セッション設定）。**重ねるだけ**で文字・桁・ホスト色に触れない。
+        画面領域いっぱいに敷くため .screen-wrap の中に置く（フッターは覆わない）。
+      -->
+      <WatermarkOverlay v-if="watermark" :watermark="watermark" />
       <!-- 通信中プロテクト（0.5 秒超で loading クラス＝スピナー表示） -->
       <div v-if="busy" class="busy-overlay" :class="{ loading }" aria-busy="true">
         <div v-if="loading" class="spinner" role="status" aria-label="通信中"></div>
