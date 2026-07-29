@@ -86,6 +86,20 @@ describe("前画面との差分による窓判定（実機 fixture）", () => {
     }
   });
 
+  it("**表示設定（SO/SI マーク）を変えても窓を落とさない**", () => {
+    // 差分は画面モデルで比べる。表示用 charOf を使うと、窓の枠が背景の DBCS を分断して
+    // 残った SO/SI の片割れが `{` `}` として「新しい内容」に数えられ、本物の窓が落ちる
+    // （実機 win-wrkmbrpdm-f1 / win-wrkobjpdm-asaolib-f1 の両方で再現した）
+    const marks = (c: Cell) =>
+      c.kind === "so" ? "{" : c.kind === "si" ? "}" : c.char === "" ? " " : c.char;
+    const missed: string[] = [];
+    for (const e of windows) {
+      const p = load(e.name);
+      if (!detectWindowRect(toSnap(p.cur), marks, toSnap(p.prev))) missed.push(e.label);
+    }
+    expect(missed).toEqual([]);
+  });
+
   it(`通常画面を窓と誤検出しない（${normals.length} 対）`, () => {
     const wrong: string[] = [];
     for (const e of normals) {

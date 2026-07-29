@@ -307,7 +307,12 @@ export function detectWindowRect(
   // 前画面が渡されていれば「窓は背景の上に開く」ことで裏を取る（`introducedOutside`）。
   // 渡されなければここで終わり＝**従来と 1 つも結果が変わらない**。
   if (!candidate || !prev) return candidate;
-  return introducedOutside(prev, snap, candidate, charOf) ? null : candidate;
+  // **表示設定ではなく画面モデルで比べる**（`charOf` を渡さない）。
+  // SO/SI マーク表示が ON だと、窓の枠が背景の DBCS を分断して残った SO/SI の片割れが
+  // `{` `}` として見え、「新しい内容が現れた」と数えられて**本物の窓が落ちる**
+  // （実機 fixture win-wrkmbrpdm-f1 / win-wrkobjpdm-asaolib-f1 の両方で再現）。
+  // 差分が答えるべきは「ホストがそこへ新しい内容を置いたか」なので、表示の都合を混ぜない。
+  return introducedOutside(prev, snap, candidate) ? null : candidate;
 }
 
 /** 2 つの画面が表示上まったく同じか（表示文字と反転だけを見る） */
@@ -344,6 +349,9 @@ export function sameScreen(a: ScreenSnapshot, b: ScreenSnapshot, charOf: CharOf 
  * 2. **残る差分はすべて `文字→空白` だった**（実測: WRKACTJOB 3・WRKOBJPDM 3・WRKSPLF 14 セル）。
  *    **窓の枠が DBCS 文字の片割れを潰した跡**で、縁の 1〜3 桁に限って出る。
  *    → 「現在が空白かつ非反転」のセルは数えない。これで実測 9/9 が通る
+ * 3. **比較は画面モデルで行う**（既定の `charOf`）。呼び出し側の表示用 `charOf` を使うと、
+ *    SO/SI マーク表示 ON のとき上記の片割れが `{` `}` として見え、2 の除外をすり抜けて
+ *    **本物の窓が落ちる**（実機で再現）。差分が答えるべきは「ホストが新しい内容を置いたか」
  *
  * 画面サイズが変わっているときは比較の意味が無いので**裏取りをしない**（false を返す）。
  */
@@ -351,7 +359,7 @@ function introducedOutside(
   prev: ScreenSnapshot,
   cur: ScreenSnapshot,
   rect: WindowRect,
-  charOf: CharOf
+  charOf: CharOf = defaultCharOf
 ): boolean {
   if (prev.rows !== cur.rows || prev.cols !== cur.cols) return false;
   // 枠そのものは内側矩形の外にあるので、外周を含めた矩形で測る

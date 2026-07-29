@@ -65,6 +65,11 @@
    "name": "nrm-enter",
    "label": "NORMAL: メニューで Enter 空打ち",
    "window": false
+  },
+  {
+   "name": "win-wrkmbrpdm-f1",
+   "label": "WINDOW: WRKMBRPDM の上で F1",
+   "window": true
   }
  ]
 }
