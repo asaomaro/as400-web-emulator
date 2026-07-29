@@ -113,9 +113,25 @@ describe("凡例と Opt 列の結び付け（実機 fixture）", () => {
     expect(hints!.options.map((o) => o.value)).toContain("11");
   });
 
-  it("Opt 列が無ければ凡例があっても null", () => {
+  it("凡例も Opt 列も無い画面は null", () => {
+    // この 2 つは**凡例が無い**ので null になる。規則「両方揃ったときだけ」を突くのは次のケース
     expect(detectOptionHints(load("wrkmsgq"))).toBeNull();
     expect(detectOptionHints(load("menu"))).toBeNull();
+  });
+
+  it("**凡例があっても Opt 列が無ければ null**（両方揃ったときだけ発火する）", () => {
+    // 実機 PDM から入力欄だけを取り去る。凡例（2=変更 …）はそのまま残っている
+    const snap = load("wrkobjpdm");
+    const noFields = { ...snap, fields: [] } as ScreenSnapshot;
+    expect(detectOptionColumn(noFields)).toBeNull();
+    expect(detectOptionHints(noFields)).toBeNull();
+  });
+
+  it("短い欄が 2 行しか並ばなければ Opt 列とみなさない", () => {
+    const snap = load("wrkobjpdm");
+    const two = { ...snap, fields: snap.fields.filter((f) => f.row <= 12) } as ScreenSnapshot;
+    expect(detectOptionColumn(two)).toBeNull();
+    expect(detectOptionHints(two)).toBeNull();
   });
 
   it("機能キー凡例（F3= / F24=）は拾わない", () => {

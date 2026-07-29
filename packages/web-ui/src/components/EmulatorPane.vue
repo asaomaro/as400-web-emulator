@@ -774,6 +774,7 @@ function onWheel(ev: WheelEvent): void {
         :buttons="view.buttons"
         :window-frame="view.windowFrame"
         :window-backdrop="view.windowBackdrop"
+        :opt-hints="view.optHints"
         @edit="onEdit"
         @cursor="onCursor"
         @field-full="onFieldFull"

@@ -23,16 +23,16 @@
 
 ## 第3段: UI
 
-- [ ] T6: `ScreenGrid.vue` にポップオーバーを足す（依存: T3, T5）
+- [x] T6: `ScreenGrid.vue` にポップオーバーを足す（依存: T3, T5）
   - フォーカス中の欄が Opt 列に属するときだけ導線を出す
   - 下矢印 or 印のクリックで開く。`Esc` / 外側クリックで閉じる
   - 選ぶと**既存の入力経路**で番号が入り、フォーカスを欄へ戻す
   - 設定 OFF なら検出も走らせない
-- [ ] T7: 文言を `opMessages.ts` に置く（依存: T6）
-- [ ] T8: ScreenGrid のコンポーネントテスト（依存: T6）
+- [x] T7: 文言を `opMessages.ts` に置く（依存: T6）
+- [x] T8: ScreenGrid のコンポーネントテスト（依存: T6）
   - 設定 OFF で何も出ない / ON かつ Opt 欄フォーカスで出る / 選ぶと値が入る
 
 ## 仕上げ
 
-- [ ] T9: 空振り検証 — Opt 列の条件を外すと `wrkmsgq` / `menu` のテストが落ちる（依存: T4）
-- [ ] T10: 既存テスト全通過・`npm run build -w @as400web/web-ui`（vue-tsc 込み）・lint（依存: 全部）
+- [x] T9: 空振り検証 — Opt 列の条件を外すと `wrkmsgq` / `menu` のテストが落ちる（依存: T4）
+- [x] T10: 既存テスト全通過・`npm run build -w @as400web/web-ui`（vue-tsc 込み）・lint（依存: 全部）

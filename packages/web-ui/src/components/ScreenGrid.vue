@@ -27,10 +27,18 @@ import {
   type RejectReason
 } from "../composables/fieldValidate.js";
 import { splitLinks, type LinkPart } from "../composables/linkify.js";
-import { detectFkeyLegends, detectWindowRect, sameScreen, type FkeySpan, type WindowRect } from "../composables/fkeyLegend.js";
+import {
+  detectFkeyLegends,
+  detectWindowRect,
+  detectOptionHints,
+  sameScreen,
+  type FkeySpan,
+  type WindowRect,
+  type OptionSpan
+} from "../composables/fkeyLegend.js";
 import { GRID_COLOR } from "@as400web/core/browser";
 import type { ButtonStyle, WindowFrame, WindowBackdrop, SbcsView } from "../stores/viewSettings.js";
-import { MSG_PROTECTED, MSG_NO_ROOM, MSG_BY_REASON } from "../composables/opMessages.js";
+import { MSG_PROTECTED, MSG_NO_ROOM, MSG_BY_REASON, MSG_OPT_HINTS } from "../composables/opMessages.js";
 import { fitFont, MIN_FONT_PX, MAX_FONT_PX } from "../composables/fitFont.js";
 import { fieldAt, caretInField, roundToDbcsLead, wordRangeAt } from "../composables/useCursor.js";
 import {
@@ -82,8 +90,10 @@ const props = withDefaults(
     windowFrame?: WindowFrame;
     /** ウィンドウの背景（窓の外側）の見せ方。none は背景に何もしない */
     windowBackdrop?: WindowBackdrop;
+    /** オプション欄の選択肢を出すか（既定 OFF。推測を含む機能は勝手に有効化しない） */
+    optHints?: boolean;
   }>(),
-  { linkify: true, buttons: "none", windowFrame: "none", windowBackdrop: "none", sbcsView: "host" }
+  { linkify: true, buttons: "none", windowFrame: "none", windowBackdrop: "none", optHints: false, sbcsView: "host" }
 );
 const emit = defineEmits<{
   (e: "edit", fieldIndex: number, value: string): void;
@@ -223,6 +233,11 @@ const decoWindow = computed<WindowRect | null>(() => {
   if (props.snapshot.gui?.windows.some((w) => w.border !== undefined)) return null;
   return detectedWindow.value;
 });
+
+/** 選択肢を欄の直下に置く（.gui-window と同じ ch/em 基準。桁割りには影響しない） */
+function optHintStyle(p: { row: number; col: number }): Record<string, string> {
+  return { left: p.col - 1 + "ch", top: p.row + "em" };
+}
 
 /** 桁の閉区間 → 重ねる要素の位置・寸法（.gui-window と同じ ch/em 基準） */
 function winRectStyle(r: { row1: number; row2: number; col1: number; col2: number }): Record<string, string> {
@@ -790,6 +805,44 @@ const legendsByRow = computed<Map<number, FkeySpan[]>>(() => {
   }
   return map;
 });
+
+/**
+ * **オプション欄の選択肢**（`2=変更 3=コピー …`）。設定 ON のときだけ検出する。
+ *
+ * 検出は snapshot だけに依存させる（入力のたびに走らせない。`legendsByRow` と同じ理由）。
+ */
+const optionHints = computed(() => (props.optHints ? detectOptionHints(props.snapshot, displayChar) : null));
+
+/** フォーカス中の入力欄。ポップオーバーの開閉はこれに**完全に従属**させる。 */
+const focusedField = ref<Field | null>(null);
+
+/**
+ * 出すべき選択肢と位置。フォーカス中の欄が Opt 列に属するときだけ返す。
+ *
+ * **開閉をフォーカスだけで決めるのが要**（利用者指示）。キーイベントを 1 つも購読しないので、
+ * 矢印・Tab・Enter・Esc は今日とまったく同じ経路を通る。矩形選択が始まると
+ * `onGridDragMove` が入力欄を blur するため、**選択開始と同時に自然に閉じる**。
+ */
+const optPopover = computed<{ row: number; col: number; options: OptionSpan[] } | null>(() => {
+  const hints = optionHints.value;
+  const f = focusedField.value;
+  if (!hints || !f) return null;
+  if (f.col !== hints.column.col || !hints.column.rows.includes(f.row)) return null;
+  return { row: f.row, col: f.col, options: hints.options };
+});
+
+/**
+ * 選択肢を選んだ: **既存の貼り付け経路**で欄へ書く（値を直接いじらない）。
+ *
+ * 欄はフォーカス中なので `focus` 文脈を渡し、**打鍵と同じ扱い**（edit モデルの更新・sync）にする。
+ * 渡さないと非フォーカス経路（`emit("edit")`）へ落ち、カーソルと編集状態が食い違う。
+ */
+function chooseOption(o: OptionSpan): void {
+  const f = focusedField.value;
+  if (!f) return;
+  const el = inputForSlice(f, 0);
+  pasteFrom({ row: f.row, col: f.col }, o.value, el ? { f, el, startOffset: 0 } : undefined);
+}
 
 /**
  * 凡例（桁）を text セグメント内の文字 index へ写す。
@@ -1865,6 +1918,8 @@ function onDbcsKeydown(f: Field, ev: KeyboardEvent, el: HTMLInputElement): void 
 
 function onInputFocus(f: Field, ev: FocusEvent, sliceIdx = 0): void {
   const el = ev.target as HTMLInputElement;
+  // オプション選択肢の開閉はフォーカスにだけ従属させる（キーは 1 つも購読しない）
+  focusedField.value = f;
   // sync がスライス間で focus を移したときは何もしない。ここで beginEdit すると props
   // （emit 前で古い）から編集モデルを作り直して直前の打鍵が消え、caret も先頭へ戻る。
   // 値・キャレットの確定は呼び出し元の sync が続けて行う。
@@ -1916,6 +1971,8 @@ function onInputFocus(f: Field, ev: FocusEvent, sliceIdx = 0): void {
  *  行またぎ欄では、その input が担当するスライスぶんだけを戻す（全長を戻すと桁が溢れる）。 */
 function onInputBlur(f: Field, ev: FocusEvent): void {
   if (composing.value) return; // IME 変換中の一時 blur は無視
+  // 矩形選択の開始（onGridDragMove の blur）もここを通るので、選択と同時に選択肢が閉じる
+  if (!syncingFocus) focusedField.value = null;
   const el = ev.target as HTMLInputElement;
   // **スライス間の一時 blur（syncingFocus）以外は編集状態を解除する。**
   // これをしないと、一度フォーカスした欄が blur 後も editFieldIndex に残って「編集中」扱いのままになり、
@@ -2810,6 +2867,37 @@ onBeforeUnmount(() => {
     <!-- 拡張 5250 GUI オーバーレイ（ウィンドウ枠・選択フィールド・スクロールバー） -->
     <!-- ウィンドウ装飾（画面設定）。**重ねるだけ**で文字・桁に触れず、
          pointer-events:none で窓の中の操作（入力・クリック・矩形選択）を透過させる。 -->
+    <!--
+      オプション欄の選択肢。**矩形選択・コピー・貼り付けを妨げないことを最優先**にしている:
+        - mousedown を .stop でグリッドへ伝播させない（伝播すると clearRectSel() が走り選択が消える）
+        - mousedown を .prevent で既定のフォーカス移動ごと止める（入力欄にフォーカスを残す。
+          奪うと貼り付け先が変わる）
+        - キーイベントは 1 つも購読しない（Esc すら捕まえない）
+      絶対配置なので <input> の桁割りには一切触れない。
+    -->
+    <div
+      v-if="optPopover"
+      class="opt-hints"
+      :style="optHintStyle(optPopover)"
+      role="listbox"
+      :aria-label="MSG_OPT_HINTS"
+      @mousedown.stop.prevent
+    >
+      <button
+        v-for="o in optPopover.options"
+        :key="o.value"
+        type="button"
+        class="opt-hint"
+        role="option"
+        :aria-selected="false"
+        @mousedown.stop.prevent
+        @click.stop="chooseOption(o)"
+      >
+        <span class="opt-hint-n">{{ o.value }}</span>
+        <span class="opt-hint-l">{{ o.label }}</span>
+      </button>
+    </div>
+
     <template v-if="decoWindow">
       <div
         v-for="(st, i) in windowBackdrop === 'none' ? [] : smokeRects(decoWindow)"
@@ -3091,6 +3179,49 @@ onBeforeUnmount(() => {
   background-position: 0 0.625em;
 }
 /* WDWBORDER: ホスト指定の罫線文字で描く枠。文字なので等幅グリッドにそのまま乗る */
+.opt-hints {
+  /* .gui-window と同じグリッド padding 分の補正。絶対配置なので桁割りには影響しない */
+  position: absolute;
+  margin: 8px 0 0 10px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  min-width: 12ch;
+  max-height: 14em;
+  overflow-y: auto;
+  padding: 2px;
+  border: 1px solid var(--border, #5a5a5a);
+  border-radius: 4px;
+  background: var(--panel-bg, #1c1c1c);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 35%);
+  font-size: 0.85em;
+  line-height: 1.4;
+}
+.opt-hint {
+  display: flex;
+  gap: 0.6em;
+  align-items: baseline;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--fg, #ddd);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.opt-hint:hover,
+.opt-hint:focus-visible {
+  background: var(--hover-bg, #333);
+}
+.opt-hint-n {
+  min-width: 2ch;
+  color: var(--accent, #7ab8ff);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .gui-window-border {
   position: absolute;
   margin: 8px 0 0 10px; /* .gui-window と同じグリッド padding 分の補正 */
