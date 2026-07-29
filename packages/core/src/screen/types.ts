@@ -182,6 +182,26 @@ export interface GuiConstructs {
   gridLines: GuiGridLine[];
 }
 
+/**
+ * 直近に適用したレコードがバッファへ書いた範囲。**窓かどうかの判定材料**として web-ui へ渡す。
+ *
+ * 罫線からの推測では「左右に `:` が並ぶ帳票」「反転バナー」を窓と誤検出する。判定が見た目しか
+ * 見られないのは材料が渡っていないためで、**窓かどうかは描画結果ではなく受信データに出ている**
+ * ——本物の窓は背景を消さずに窓の領域だけ書き、通常画面は CLEAR してから画面全体を書く。
+ * 実機採取レコード（`packages/core/test/fixtures/pub400-*.jsonl`）を再生した実測では、
+ * **通常の全画面遷移 6/6 すべてに CLEAR が付いていた**。
+ */
+export interface WriteExtent {
+  /** 書き込みの外接矩形（1 始まり・両端含む）。書き込みが 1 セルも無ければ省略 */
+  rect?: { row1: number; row2: number; col1: number; col2: number };
+  /** CLEAR UNIT / CLEAR UNIT ALTERNATE を通った */
+  cleared: boolean;
+  /** RESTORE SCREEN（ESC 0x12）で画面を丸ごと戻した */
+  restored: boolean;
+  /** 実際に書かれたセル数（矩形の面積とは別。矩形が疎かどうかを見る余地を残す） */
+  cells: number;
+}
+
 export interface ScreenSnapshot {
   sessionId: string;
   rows: 24 | 27;
@@ -193,4 +213,11 @@ export interface ScreenSnapshot {
   systemMessage?: string;
   /** 拡張 5250 GUI コントロール（存在する場合のみ。空なら省略） */
   gui?: GuiConstructs;
+  /**
+   * 直近レコードの書き込み範囲（記録がある場合のみ）。
+   *
+   * **任意にしてあるのは意図的**——既存のテスト資産は手組み snapshot／描画済み fixture で
+   * これを持たない。消費側は**不在を許容し、その場合は従来どおりに振る舞う**こと。
+   */
+  lastWrite?: WriteExtent;
 }

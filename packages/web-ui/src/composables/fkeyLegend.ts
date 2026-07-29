@@ -195,12 +195,43 @@ function charAtCol(rt: RowText, col: number): string {
   return i < 0 ? "" : rt.text[i]!;
 }
 
+/** 窓の最小の大きさ。枠上・中身・枠下で最低 3 行、幅は罫線の最小連続長（`horizontalRuns`）に合わせる */
+const MIN_WINDOW_ROWS = 3;
+const MIN_WINDOW_COLS = 8;
+
+/**
+ * 受信データの書き込み範囲から「窓ではないことが確定する」かを判定する。
+ *
+ * **窓かどうかは描画結果ではなく受信データに出ている。** 本物の窓は背景を消さずに窓の領域だけ
+ * 書き、通常画面は CLEAR してから画面全体を書く。罫線・反転からの推測は帳票（左右に `:` が並ぶ）や
+ * 反転バナーを窓と誤検出するが、これらは受信データ側では通常画面としてはっきり分かれる。
+ *
+ * 第一級の条件を **CLEAR の有無**にしているのは実測が根拠——実機採取レコードの再生で
+ * **通常の全画面遷移 6/6 すべてに CLEAR が付いていた**。面積比は通常画面でも 96% に留まることが
+ * あり（メッセージ行を書かない遷移）、逆に本物の窓が画面の大半を覆うこともあるので主条件にできない。
+ */
+function ruledOutByWriteExtent(snap: ScreenSnapshot): boolean {
+  const w = snap.lastWrite;
+  if (!w) return false; // 記録が無ければ何も言えない（従来どおりに振る舞う）
+  // CLEAR＝画面を作り直した / RESTORE＝窓を閉じて元へ戻した。どちらも窓ではない
+  if (w.cleared || w.restored) return true;
+  if (!w.rect) return true; // 1 セルも書いていないのに窓が開いていることはない
+  const { row1, row2, col1, col2 } = w.rect;
+  // メッセージ行だけの書き換えのような小さすぎる更新を窓と誤らない
+  if (row2 - row1 + 1 < MIN_WINDOW_ROWS || col2 - col1 + 1 < MIN_WINDOW_COLS) return true;
+  // 画面全体を書いたなら窓ではない。**完全一致だけ**を見る（96% 事例は CLEAR 側で弾ける）
+  return row1 === 1 && row2 === snap.rows && col1 === 1 && col2 === snap.cols;
+}
+
 /**
  * 最前面の窓の内側を返す（spec D3）。
  *
- * 1. `gui.windows` があればその最後（＝最前面）を使う。
- * 2. 無ければ罫線から検出する。**通常のヘルプ窓は `gui.windows` に出ない**ため
+ * 1. `gui.windows` があればその最後（＝最前面）を使う。**ホストの宣言が最優先**。
+ * 2. 無ければ、まず受信データの書き込み範囲で**窓ではないことが確定する場合を門前払い**する
+ *    （`ruledOutByWriteExtent`。記録が無い snapshot では何もしない）。
+ * 3. 残ったものを罫線・反転から検出する。**通常のヘルプ窓は `gui.windows` に出ない**ため
  *    （research F3。文字で描かれる）、この経路が実際にはほとんどを占める。
+ *    ここでの罫線・反転の役割は「窓かどうか」ではなく「**枠がどこか**」に降格している。
  */
 export function detectWindowRect(snap: ScreenSnapshot, charOf: CharOf = defaultCharOf): WindowRect | null {
   const win = snap.gui?.windows;
@@ -224,6 +255,8 @@ export function detectWindowRect(snap: ScreenSnapshot, charOf: CharOf = defaultC
       col2: w.col + w.width + 2
     };
   }
+
+  if (ruledOutByWriteExtent(snap)) return null;
 
   const rows = snap.cells.map((cells) => rowText(cells, snap.cols, charOf));
   const edges: { r: number; from: number; to: number }[] = [];
