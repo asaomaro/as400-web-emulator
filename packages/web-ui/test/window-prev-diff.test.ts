@@ -33,6 +33,7 @@ interface Snap {
 }
 interface Pair { label: string; prev: Snap; cur: Snap }
 interface Index { name: string; label: string; window: boolean }
+interface IndexFile { note: string; pairs: Index[] }
 
 const KIND: Record<string, Cell["kind"]> = {
   s: "sbcs", L: "dbcs-lead", T: "dbcs-tail", a: "attr", o: "so", i: "si"
@@ -59,7 +60,7 @@ function toSnap(f: Snap): ScreenSnapshot {
   return s;
 }
 
-const index = JSON.parse(readFileSync(join(DIR, "index.json"), "utf8")) as Index[];
+const index = (JSON.parse(readFileSync(join(DIR, "index.json"), "utf8")) as IndexFile).pairs;
 const load = (name: string): Pair => JSON.parse(readFileSync(join(DIR, `${name}.json`), "utf8")) as Pair;
 
 const windows = index.filter((e) => e.window);
