@@ -913,14 +913,37 @@ function openOptHints(): boolean {
   return true;
 }
 
-/** リストを閉じて、元の Opt 欄へフォーカスを戻す */
-function closeOptHints(): void {
+/**
+ * リストを閉じる。既定では元の Opt 欄へフォーカスを戻す。
+ *
+ * `refocus: false` は**外側クリックで閉じるとき**に使う——利用者が別の場所を押したのに
+ * こちらがフォーカスを奪い返すと、クリック先が効かない。
+ */
+function closeOptHints(refocus = true): void {
   const row = optOpenRow.value;
   optOpenRow.value = null;
-  if (row === null) return;
+  if (!refocus || row === null) return;
   const f = optFieldAtRow(row);
   if (f) inputForSlice(f, 0)?.focus();
 }
+
+/**
+ * **リストの外側を押したら閉じる。**
+ *
+ * 閉じるだけで `preventDefault` も `stopPropagation` もしない——ここで止めると
+ * 矩形選択のドラッグ開始（`onGridMousedown`）を潰してしまう。ボタン自身の上は除外する
+ * （ボタンの click がトグルを担うので、ここで閉じると開き直しになる）。
+ */
+function onDocMousedownForOpt(ev: MouseEvent): void {
+  const t = ev.target;
+  if (t instanceof HTMLElement && t.closest(".opt-hints, .opt-btn")) return;
+  closeOptHints(false);
+}
+watch(optOpenRow, (row) => {
+  if (row === null) document.removeEventListener("mousedown", onDocMousedownForOpt);
+  else document.addEventListener("mousedown", onDocMousedownForOpt);
+});
+onBeforeUnmount(() => document.removeEventListener("mousedown", onDocMousedownForOpt));
 
 /**
  * リスト内のキー操作。**Esc はここで握り潰す**——開いている間は他の Esc 割当

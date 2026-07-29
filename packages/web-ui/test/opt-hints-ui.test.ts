@@ -226,6 +226,41 @@ describe("オプション欄の選択肢（UI）", () => {
     });
   });
 
+  describe("外側クリックで閉じる", () => {
+    it("リストの外を押すと閉じる", async () => {
+      const w = mountGrid("panel");
+      await w.find(".opt-btn").trigger("click");
+      await nextTick();
+      expect(w.find(".opt-hints").exists()).toBe(true);
+
+      document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      await nextTick();
+      expect(w.find(".opt-hints").exists()).toBe(false);
+      w.unmount();
+    });
+
+    it("リストの中を押しても閉じない", async () => {
+      const w = mountGrid("panel");
+      await w.find(".opt-btn").trigger("click");
+      await nextTick();
+      w.find(".opt-hint").element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      await nextTick();
+      expect(w.find(".opt-hints").exists()).toBe(true);
+      w.unmount();
+    });
+
+    it("**閉じるだけで矩形選択のドラッグ開始を潰さない**", async () => {
+      const w = mountGrid("panel");
+      await w.find(".opt-btn").trigger("click");
+      await nextTick();
+      const ev = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+      document.body.dispatchEvent(ev);
+      await nextTick();
+      expect(ev.defaultPrevented).toBe(false); // preventDefault も stopPropagation もしない
+      w.unmount();
+    });
+  });
+
   describe("見せ方の設定", () => {
     it("既定（none）では検出も走らせない", () => {
       const w = mountGrid("none");
