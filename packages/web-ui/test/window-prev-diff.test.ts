@@ -168,32 +168,29 @@ describe("③ 帳票の誤検出", () => {
 });
 
 describe("既知の制限: 大きい窓から小さい窓へ戻ると判定が外れる", () => {
-  /** 画面いっぱいの大きい窓（拡張ヘルプ相当） */
-  const BIG = {
-    2: pad(2, ".".repeat(78)),
-    ...Object.fromEntries([...Array(20).keys()].map((i) => [i + 3, pad(2, ":") + pad(77, ":")])),
-    23: pad(2, ".".repeat(78))
-  };
-  /** 元のヘルプ窓（小さい）。大きい窓が占めていた外側は背景へ戻っている */
-  const SMALL = {
-    1: "MAIN                        IBM I メインメニュー",
-    8: pad(20, ".".repeat(40)),
-    ...Object.fromEntries([...Array(4).keys()].map((i) => [i + 9, pad(20, ":") + pad(19, ":")])),
-    13: pad(20, ".".repeat(40)),
-    20: "background text restored"
-  };
-
-  it("**大きい窓 → 小さい窓では窓と判定されない**（原理的な制限。直っていたら見直すこと）", () => {
-    // この判定は「窓は背景の上に開く＝枠の外は前のまま」という前提に立っている。
-    // 窓が縮むと、大きい窓が占めていた領域が背景で描き直され、それが小さい窓の枠外に当たる。
-    // 通常画面への遷移とまったく同じ形なので、前画面 1 枚では区別できない。
-    // 費用に見合わないため制限事項として受け入れた（利用者判断 2026-07-29）。
-    expect(detectWindowRect(synth(SMALL))).not.toBeNull(); // 前画面なしなら窓として拾える
-    expect(detectWindowRect(synth(SMALL), undefined, synth(BIG))).toBeNull(); // ← 制限
+  /**
+   * 実機で採った遷移（SR-OSAKA・IBM i 7.5 / WRKMBRPDM → F1 ヘルプ → F2 拡張ヘルプ → F12 で戻る）。
+   *
+   * この判定は「窓は背景の上に開く＝**枠の外は前の画面のまま**」という前提に立っている。
+   * 窓が縮むと、大きい窓が占めていた領域が背景で描き直され、それが小さい窓の枠外に当たる
+   * ——通常画面への遷移とまったく同じ形なので、前画面 1 枚では原理的に区別できない。
+   *
+   * **RESTORE SCREEN を「1 つ前の窓へ戻った」合図に使う案は実機で否定された。**
+   * 4 段すべて `cleared=true / restored=false / rect=全画面` で、ホストは毎回
+   * クリアしてから全画面を描き直していた（`cells` が 3053 → 1702 → 1921 → 1702）。
+   *
+   * 費用に見合わないため制限事項として受け入れた（利用者判断 2026-07-29）。
+   */
+  it("**実機: 拡張ヘルプから戻ると窓と判定されない**（直っていたら見直すこと）", () => {
+    const p = load("win-help-shrink-back");
+    expect(detectWindowRect(toSnap(p.cur))).not.toBeNull(); // 前画面なしなら窓として拾える
+    expect(detectWindowRect(toSnap(p.cur), undefined, toSnap(p.prev))).toBeNull(); // ← 制限
   });
 
-  it("小さい窓 → 大きい窓（広がる方向）は判定できる", () => {
-    expect(detectWindowRect(synth(BIG), undefined, synth(SMALL))).not.toBeNull();
+  it("実機: RESTORE SCREEN は来ない（合図として使えない）", () => {
+    const p = load("win-help-shrink-back");
+    expect(p.cur.lastWrite?.restored).toBe(false);
+    expect(p.cur.lastWrite?.cleared).toBe(true);
   });
 });
 

@@ -164,8 +164,22 @@ core 改修が入るので、いきなり判定を切り替えない。
 `window-prev-diff.test.ts` の「既知の制限」節で**この挙動を固定してある**——
 誰かが「直った」と思って挙動を変えたら、そのテストが落ちて気づける。
 
-### もし将来やるなら
+### 却下: RESTORE SCREEN を合図に使う（**実機で否定済み。再検討しないこと**）
 
-- ホストは窓を開く前に SAVE SCREEN、閉じるときに RESTORE SCREEN を送る。
-  `WriteExtent.restored` は既に取れているので、**RESTORE を「1 つ前の窓へ戻った」合図として使える**
-  可能性がある（未検証。実機で RESTORE のタイミングを測るところから）
+「ホストは窓を閉じるとき RESTORE SCREEN を送るので、`WriteExtent.restored` を
+『1 つ前の窓へ戻った』合図に使えるのでは」という案を実機で測った（2026-07-29 / SR-OSAKA・IBM i 7.5）。
+`WRKMBRPDM` → `F1` ヘルプ → `F2` 拡張ヘルプ → `F12` で戻る:
+
+| 段 | cleared | restored | rect | cells |
+|---|---|---|---|---|
+| 1) WRKMBRPDM 一覧 | true | false | 全画面 | 3053 |
+| 2) F1 ヘルプ窓 A | true | false | 全画面 | 1702 |
+| 3) F2 拡張ヘルプ B（大） | true | false | 全画面 | 1921 |
+| 4) **F12 で A へ戻る** | true | **false** | 全画面 | 1702 |
+
+**4 段すべて `restored=false`。** ホストは毎回クリアしてから全画面を描き直しており、
+**RESTORE SCREEN は来ない**。合図として使えない。
+
+実機の遷移を fixture 化してある（`win-help-shrink-back`）。
+`window-prev-diff.test.ts` の「既知の制限」節が、**判定が外れること**と
+**`restored` が false であること**の両方を固定している。
