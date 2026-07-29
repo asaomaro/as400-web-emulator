@@ -235,8 +235,15 @@ function isOverlayWrite(snap: ScreenSnapshot): boolean {
  *    Attn 系の窓は実機で**重ね書き**（CLEAR なしの部分書き込み）と確認できたので、
  *    重ね書きでないレコードなら反転は窓ではないと切れる（`isOverlayWrite`）。
  *    罫線経路に同じ条件を掛けてはいけない理由は `isOverlayWrite` の注記を参照。
+ * 4. `prev`（直前の画面）が渡されていれば、**枠の外に新しい内容が現れていないか**で
+ *    候補の裏を取る（`introducedOutside`）。ヘルプ窓が全画面書き直しで来ても効く唯一の材料。
+ *    **省略時は 3 までで終わり＝従来と 1 つも結果が変わらない。**
  */
-export function detectWindowRect(snap: ScreenSnapshot, charOf: CharOf = defaultCharOf): WindowRect | null {
+export function detectWindowRect(
+  snap: ScreenSnapshot,
+  charOf: CharOf = defaultCharOf,
+  prev?: ScreenSnapshot | null
+): WindowRect | null {
   const win = snap.gui?.windows;
   if (win && win.length > 0) {
     const w = win[win.length - 1]!;
@@ -295,8 +302,80 @@ export function detectWindowRect(snap: ScreenSnapshot, charOf: CharOf = defaultC
   // ATNPGM の窓は枠を反転で描く（罫線文字を使わない）。**両方を見て前面を選ぶ**。
   // **反転経路にだけ受信データの裏を取る**（罫線経路＝ヘルプ窓の道には掛けない。`isOverlayWrite` 参照）
   const reverse = isOverlayWrite(snap) ? detectReverseFrame(snap) : null;
-  if (border && reverse && containedIn(reverse, border)) return reverse;
-  return border ?? reverse;
+  const candidate = border && reverse && containedIn(reverse, border) ? reverse : (border ?? reverse);
+
+  // 前画面が渡されていれば「窓は背景の上に開く」ことで裏を取る（`introducedOutside`）。
+  // 渡されなければここで終わり＝**従来と 1 つも結果が変わらない**。
+  if (!candidate || !prev) return candidate;
+  return introducedOutside(prev, snap, candidate, charOf) ? null : candidate;
+}
+
+/** 2 つの画面が表示上まったく同じか（表示文字と反転だけを見る） */
+export function sameScreen(a: ScreenSnapshot, b: ScreenSnapshot, charOf: CharOf = defaultCharOf): boolean {
+  if (a.rows !== b.rows || a.cols !== b.cols) return false;
+  for (let r = 0; r < a.rows; r++) {
+    const ra = a.cells[r];
+    const rb = b.cells[r];
+    if (!ra || !rb) return false;
+    for (let c = 0; c < a.cols; c++) {
+      const ca = ra[c];
+      const cb = rb[c];
+      if (!ca || !cb) return false;
+      if (ca.reverse !== cb.reverse || charOf(ca) !== charOf(cb)) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * 候補矩形の**外側に新しい内容が現れた**か。現れていれば窓ではない（画面が入れ替わっている）。
+ *
+ * 【この形に落ち着いた理由 — 実機 34 対（窓 9・通常 25）で実測 2026-07-29】
+ *
+ * 窓は背景の上に開くので、**枠の外側は前の画面のまま**であるはず。通常画面への遷移なら
+ * 枠の外にも新しい内容が出る。受信データ（`WriteExtent`）と違い**画面と画面の差分**なので、
+ * ヘルプ窓が全画面書き直しで来ても成立する（そちらの限界は `isOverlayWrite` の注記を参照）。
+ *
+ * 素直に書くと 2 か所で外す:
+ *
+ * 1. **`detectWindowRect` が返すのは枠の「内側」。** そのまま外側を測ると
+ *    **新しく描かれた枠自体**が変化として数えられ、実測で窓 9 件中 8 件を落とした。
+ *    → 外周（±1 行・±1 桁）を含めた矩形の外側を見る
+ * 2. **残る差分はすべて `文字→空白` だった**（実測: WRKACTJOB 3・WRKOBJPDM 3・WRKSPLF 14 セル）。
+ *    **窓の枠が DBCS 文字の片割れを潰した跡**で、縁の 1〜3 桁に限って出る。
+ *    → 「現在が空白かつ非反転」のセルは数えない。これで実測 9/9 が通る
+ *
+ * 画面サイズが変わっているときは比較の意味が無いので**裏取りをしない**（false を返す）。
+ */
+function introducedOutside(
+  prev: ScreenSnapshot,
+  cur: ScreenSnapshot,
+  rect: WindowRect,
+  charOf: CharOf
+): boolean {
+  if (prev.rows !== cur.rows || prev.cols !== cur.cols) return false;
+  // 枠そのものは内側矩形の外にあるので、外周を含めた矩形で測る
+  const r1 = rect.row1 - 1;
+  const r2 = rect.row2 + 1;
+  const c1 = rect.col1 - 1;
+  const c2 = rect.col2 + 1;
+  for (let r = 1; r <= cur.rows; r++) {
+    const inRows = r >= r1 && r <= r2;
+    const rowCur = cur.cells[r - 1];
+    const rowPrev = prev.cells[r - 1];
+    if (!rowCur || !rowPrev) continue;
+    for (let c = 1; c <= cur.cols; c++) {
+      if (inRows && c >= c1 && c <= c2) continue;
+      const cc = rowCur[c - 1];
+      const cp = rowPrev[c - 1];
+      if (!cc || !cp) continue;
+      const now = charOf(cc);
+      // 空白になっただけ＝枠が DBCS の片割れを潰した跡。新しい内容が出たわけではない
+      if (now === " " && !cc.reverse) continue;
+      if (now !== charOf(cp) || cc.reverse !== cp.reverse) return true;
+    }
+  }
+  return false;
 }
 
 /**
