@@ -67,3 +67,67 @@ Tests  7 failed | 3 passed (10)
 
 **全受け入れ基準を満たす。** 未解決の失敗なし（server の 4 件は `unzip` 未導入の環境要因）。
 → review 工程へ進む。
+
+
+---
+
+# 追試: 実機検証（2026-07-29・パスワード提供後）
+
+`decisions.md` D4 で「未検証の穴」としていた実機検証を実施した。**設計の前提が半分崩れた。**
+
+## 実測（SR-OSAKA / IBM i 7.5 / 装置 AS01）
+
+実装済みの `session.snapshot().lastWrite` をそのまま読んだ（monkey-patch ではない）。
+
+| 操作 | rect | cleared | restored | cells |
+|---|---|---|---|---|
+| メニュー到達 | r1-24, c1-80 (100%) | **true** | false | 654 |
+| **F1 ヘルプを開く（① 本物の窓）** | **r1-24, c1-80 (100%)** | **true** | false | 1892 |
+| F3 でヘルプを閉じる | r1-24 | false | **true** | 2627 |
+| **Attn の窓（反転枠）** | **r18-24 (29%)** | **false** | false | 353 |
+| F12 で Attn を閉じる | r1-24 | false | **true** | 2627 |
+| DSPLIBL（表形式） | r1-24 (100%) | true | false | 992 |
+| WRKOBJPDM（一覧） | r1-24 (100%) | true | false | 3220 |
+| 不正コマンド（メッセージ行） | r1-24 (100%) | true | false | 663 |
+
+## 判明したこと
+
+**「本物の窓は背景を消さずに窓の領域だけ書く」は IBM i のヘルプ・パネルには当てはまらない。**
+ホストは画面をクリアしてから、背景の見出し行ごと箱を描き直す。受信データ上、
+ヘルプ窓（①）と通常画面（③ を含む）は**同一の形**（CLEAR ＋ 全画面）をしている。
+
+一方 **Attn 系の窓（ATNPGM・反転枠）は重ね書き**（CLEAR なし・部分書き込み）で来る。
+
+## 回帰を実測で確認した
+
+実機のヘルプ画面を fixture 化し（`packages/web-ui/test/fixtures/window-stack/real-help-menu.json`）、
+改修前後で `detectWindowRect` を比較した:
+
+| 入力 | 結果 |
+|---|---|
+| `lastWrite` なし（＝改修前の挙動） | `{row1:3, row2:23, col1:3, col2:78}` **正しく検出** |
+| `lastWrite` あり（当初の門） | **`null`** ← **本物のヘルプ窓を落としていた** |
+
+backlog が「却下」した条件（枠の外に何も無ければ窓）と**同じ失敗の形**——本物を弾いて誤検出を通す。
+
+## 対応（decisions D5）
+
+門を**反転経路（`detectReverseFrame`）にだけ適用**し、罫線経路には掛けないようにした。
+
+## 受け入れ基準の再判定
+
+| requirement の完了条件 | 判定 | 備考 |
+|---|---|---|
+| `ApplyResult` と `ScreenSnapshot` に矩形と CLEAR 有無が載る | ✅ | 変更なし |
+| 既存 4 本が改修前と同じく通る | ✅ | 48 件通過 |
+| **③ が窓と判定されない** | ❌ **満たさない** | 受信データでは ① と区別できないため。backlog へ差し戻し |
+| ④ が窓と判定されない | ✅ | 反転経路の裏取りで解消 |
+| ① は引き続き窓と判定され枠位置も従来どおり | ✅ | **実機 fixture で固定**（当初は落としていた） |
+| ② は従来どおり null | ✅ | |
+| テストが空振りでない | ✅ | ④ は `lastWrite` 無しで `not.toBeNull()`＝誤検出の再現を含む |
+
+## 再実行
+
+- core 79 files / 915 tests 全通過
+- web-ui 91 files / 1054 tests 全通過（新規 `real-help-window.test.ts` を含む）
+- `npm run build`・`npm run build -w @as400web/web-ui`（vue-tsc 込み）通過
