@@ -16,3 +16,4 @@ events:
   - { ts: 2026-07-29T06:44:34Z, phase: walkthrough, event: start }
   - { ts: 2026-07-29T06:45:21Z, phase: walkthrough, event: approved }
   - { ts: 2026-07-29T06:45:22Z, phase: deliver, event: start }
+  - { ts: 2026-07-29T06:47:02Z, phase: deliver, event: approved }
