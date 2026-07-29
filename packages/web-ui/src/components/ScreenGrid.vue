@@ -235,8 +235,19 @@ const decoWindow = computed<WindowRect | null>(() => {
 });
 
 /** 選択肢を欄の直下に置く（.gui-window と同じ ch/em 基準。桁割りには影響しない） */
-function optHintStyle(p: { row: number; col: number }): Record<string, string> {
-  return { left: p.col - 1 + "ch", top: p.row + "em" };
+function optBtnStyle(p: { row: number; col: number }): Record<string, string> {
+  // **1 行 = 1.25em**（winRectStyle と同じ係数）。1em で置くと行がずれる
+  return { left: p.col - 1 + "ch", top: (p.row - 1) * 1.25 + "em" };
+}
+
+/**
+ * リストの位置。**入力エリアに重ねない**（利用者指示）——Opt 列とボタンの右側から始める。
+ * 縦は開いている行の 1 行下（ボタン自身を隠さない）。
+ */
+function optListStyle(p: { row: number; col: number }): Record<string, string> {
+  const hints = optionHints.value;
+  const left = p.col - 1 + (hints ? hints.column.length + 1 : 2);
+  return { left: left + "ch", top: p.row * 1.25 + "em" };
 }
 
 /** 桁の閉区間 → 重ねる要素の位置・寸法（.gui-window と同じ ch/em 基準） */
@@ -842,28 +853,92 @@ const optTarget = computed<{ row: number; col: number; options: OptionSpan[] } |
  * 単独の欄や定数を置こうとした欄の右隣は**素の `sbcs` 空白**だった（閉じ属性が送られない）。
  * なので kind で決め打たず、**表示文字が空白であること**を実行時に見る。
  */
-const optButtonCol = computed<number | null>(() => {
-  const t = optTarget.value;
-  if (!t) return null;
-  const col = t.col + (optionHints.value?.column.length ?? 0);
-  if (col > props.snapshot.cols) return null;
-  const c = props.snapshot.cells[t.row - 1]?.[col - 1];
-  if (!c) return null;
-  return displayChar(c) === " " ? col : null; // 埋まっていれば出さない
+const optButtons = computed<{ row: number; col: number }[]>(() => {
+  const hints = optionHints.value;
+  if (!hints) return [];
+  const col = hints.column.col + hints.column.length;
+  if (col > props.snapshot.cols) return [];
+  return hints.column.rows
+    .filter((row) => {
+      const c = props.snapshot.cells[row - 1]?.[col - 1];
+      return c !== undefined && displayChar(c) === " "; // 埋まっていれば出さない
+    })
+    .map((row) => ({ row, col }));
 });
 
-/** リストを開いているか。**明示操作（ボタン押下 / Alt+↓）でだけ true になる** */
-const optOpen = ref(false);
-watch(optTarget, (t) => { if (!t) optOpen.value = false; });
+/** リストを開いている Opt 欄の行。**明示操作（ボタン押下 / Alt+↓）でだけ入る** */
+const optOpenRow = ref<number | null>(null);
+watch(optionHints, () => { optOpenRow.value = null; }); // 画面が変わったら閉じる
 
-/** 表示するリスト（開いているときだけ） */
-const optPopoverShown = computed(() => (optOpen.value ? optTarget.value : null));
+/** 表示するリスト（開いているときだけ）。位置は開いている行から決める */
+const optPopoverShown = computed<{ row: number; col: number; options: OptionSpan[] } | null>(() => {
+  const hints = optionHints.value;
+  const row = optOpenRow.value;
+  if (!hints || row === null) return null;
+  return { row, col: hints.column.col, options: hints.options };
+});
+
+/** その行の Opt 欄 */
+function optFieldAtRow(row: number): Field | undefined {
+  const col = optionHints.value?.column.col;
+  return props.snapshot.fields.find((f) => f.row === row && f.col === col && !f.protected);
+}
+
+/** 開いた時点で欄に入っている値と一致する選択肢（あれば選択状態にする） */
+const optSelectedValue = computed<string | null>(() => {
+  const row = optOpenRow.value;
+  if (row === null) return null;
+  const f = optFieldAtRow(row);
+  if (!f) return null;
+  const cur = (inputForSlice(f, 0)?.value ?? f.value).trim();
+  return optPopoverShown.value?.options.some((o) => o.value === cur) ? cur : null;
+});
+
+/** リストを開き、選択中（無ければ先頭）の項目へフォーカスを移す */
+async function openOptAt(row: number): Promise<void> {
+  optOpenRow.value = row;
+  await nextTick();
+  const list = gridEl.value?.querySelector<HTMLElement>(".opt-hints");
+  const sel = list?.querySelector<HTMLElement>(".opt-hint[aria-selected='true']");
+  (sel ?? list?.querySelector<HTMLElement>(".opt-hint"))?.focus();
+}
 
 /** Alt+↓ で開く（ペインの onKeydown から呼ぶ）。開ければ true */
 function openOptHints(): boolean {
-  if (!optTarget.value) return false;
-  optOpen.value = true;
+  const t = optTarget.value;
+  if (!t) return false;
+  void openOptAt(t.row);
   return true;
+}
+
+/** リストを閉じて、元の Opt 欄へフォーカスを戻す */
+function closeOptHints(): void {
+  const row = optOpenRow.value;
+  optOpenRow.value = null;
+  if (row === null) return;
+  const f = optFieldAtRow(row);
+  if (f) inputForSlice(f, 0)?.focus();
+}
+
+/**
+ * リスト内のキー操作。**Esc はここで握り潰す**——開いている間は他の Esc 割当
+ * （矩形選択の解除等）を発火させない、という利用者指示。
+ * 矢印はリスト内移動、Enter/Space は選択（`.opt-hint` は button なので既定で発火する）。
+ */
+function onOptListKeydown(ev: KeyboardEvent): void {
+  if (ev.key === "Escape") {
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeOptHints();
+    return;
+  }
+  if (ev.key !== "ArrowDown" && ev.key !== "ArrowUp") return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  const items = Array.from(gridEl.value?.querySelectorAll<HTMLElement>(".opt-hint") ?? []);
+  const at = items.indexOf(document.activeElement as HTMLElement);
+  const next = ev.key === "ArrowDown" ? at + 1 : at - 1;
+  items[(next + items.length) % items.length]?.focus();
 }
 
 /**
@@ -873,11 +948,12 @@ function openOptHints(): boolean {
  * 渡さないと非フォーカス経路（`emit("edit")`）へ落ち、カーソルと編集状態が食い違う。
  */
 function chooseOption(o: OptionSpan): void {
-  const f = focusedField.value;
+  const row = optOpenRow.value;
+  const f = row === null ? undefined : optFieldAtRow(row);
   if (!f) return;
   const el = inputForSlice(f, 0);
   pasteFrom({ row: f.row, col: f.col }, o.value, el ? { f, el, startOffset: 0 } : undefined);
-  optOpen.value = false;
+  optOpenRow.value = null;
   el?.focus(); // 選び終わったら欄へ戻す（以降の打鍵は通常どおり）
 }
 
@@ -2864,8 +2940,10 @@ defineExpose({
   eraseInput: eraseInputKey,
   // 画面桁の表示文字（未送信の入力値込み）。ペインの頭出し（Ctrl+矢印）が語の判定に使う
   screenCharAt: charAtForCopy,
-  // オプション欄のドロップダウンを開く（ペインの Alt+↓ から呼ぶ）
-  openOptHints
+  // オプション欄のドロップダウン（ペインの Alt+↓・Esc から呼ぶ）
+  openOptHints,
+  optHintsOpen: () => optOpenRow.value !== null,
+  closeOptHints
 });
 
 // 画面が更新されたら矩形選択は破棄する
@@ -2920,24 +2998,26 @@ onBeforeUnmount(() => {
       停止数が倍になり、既存の使い勝手が変わってしまう。
     -->
     <button
-      v-if="optTarget && optButtonCol"
+      v-for="b in optButtons"
+      :key="'ob' + b.row"
       type="button"
       class="opt-btn"
-      :style="optHintStyle({ row: optTarget.row - 1, col: optButtonCol })"
-      :tabindex="optOpen ? 0 : -1"
-      :aria-expanded="optOpen"
+      :style="optBtnStyle(b)"
+      :tabindex="optOpenRow === b.row ? 0 : -1"
+      :aria-expanded="optOpenRow === b.row"
       :aria-label="MSG_OPT_HINTS"
       @mousedown.stop.prevent
-      @click.stop="optOpen = !optOpen"
+      @click.stop="optOpenRow === b.row ? closeOptHints() : openOptAt(b.row)"
     >▾</button>
 
     <div
       v-if="optPopoverShown"
       class="opt-hints"
-      :style="optHintStyle(optPopoverShown)"
+      :style="optListStyle(optPopoverShown)"
       role="listbox"
       :aria-label="MSG_OPT_HINTS"
       @mousedown.stop.prevent
+      @keydown="onOptListKeydown"
     >
       <button
         v-for="o in optPopoverShown.options"
@@ -2946,7 +3026,7 @@ onBeforeUnmount(() => {
         class="opt-hint"
         role="option"
         :tabindex="0"
-        :aria-selected="false"
+        :aria-selected="o.value === optSelectedValue"
         @mousedown.stop.prevent
         @click.stop="chooseOption(o)"
       >
@@ -3292,6 +3372,10 @@ onBeforeUnmount(() => {
 .opt-hint:hover,
 .opt-hint:focus-visible {
   background: var(--hover-bg, #333);
+}
+.opt-hint[aria-selected="true"] {
+  outline: 1px solid var(--accent, #7ab8ff);
+  outline-offset: -1px;
 }
 .opt-hint-n {
   min-width: 2ch;

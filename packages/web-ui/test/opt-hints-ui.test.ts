@@ -113,10 +113,10 @@ describe("オプション欄の選択肢（UI）", () => {
     w.unmount();
   });
 
-  it("**右隣 1 桁が埋まっていればボタンを出さない**", () => {
+  it("**右隣 1 桁が埋まっている行にはボタンを出さない**（他の行には出る）", () => {
     // DSPF 検証（scripts/probe-opt-adjacency.mjs）のとおり、右隣に入力欄は来ないが
     // 「必ず属性バイト（空白）」ではない——閉じ属性を送らないと定数が来うる。
-    // 行 10 はヘッダー `OPT …` で c4 が `T` に埋まっているので、そこには出さない
+    // 行 10 はヘッダー `OPT …` で c4 が `T` に埋まっているので、その行だけ出さない
     const w = mount(ScreenGrid, {
       props: {
         snapshot: snapOf([10, 11, 12].map((row, i) => ({
@@ -127,22 +127,39 @@ describe("オプション欄の選択肢（UI）", () => {
       },
       attachTo: document.body
     });
-    w.find('input.grid-input[data-field-index="0"]').trigger("focus");
-    expect(w.find(".opt-btn").exists()).toBe(false);
+    // 行 11・12 には出るが、行 10 には出ない
+    expect(w.findAll(".opt-btn").length).toBe(2);
     w.unmount();
   });
 
-  it("フォーカスが外れると閉じる（矩形選択の開始は入力欄を blur するのでここに合流する）", async () => {
+  it("ボタンは**フォーカスに関係なく各 Opt 行に常時**出る", () => {
     const w = mountGrid(true);
-    const el = firstOptInput(w);
-    await el.trigger("focus");
+    expect(w.findAll(".opt-btn").length).toBe(OPT_FIELDS.length);
+    w.unmount();
+  });
+
+  it("開いたら**選択中（無ければ先頭）の項目にフォーカスが移る**", async () => {
+    const w = mountGrid(true);
+    await firstOptInput(w).trigger("focus");
     await nextTick();
     await w.find(".opt-btn").trigger("click");
     await nextTick();
-    expect(w.find(".opt-hints").exists()).toBe(true);
-    await el.trigger("blur");
     await nextTick();
-    expect(w.find(".opt-hints").exists()).toBe(false);
+    expect(document.activeElement?.classList.contains("opt-hint")).toBe(true);
+    w.unmount();
+  });
+
+  it("**既に入っている値が選択肢にあれば選択状態にする**", async () => {
+    const fields = OPT_FIELDS.map((f, i) => (i === 0 ? { ...f, value: "3 " } : f));
+    const w = mount(ScreenGrid, {
+      props: { snapshot: snapOf(fields), edits: new Map(), focused: true, optHints: true },
+      attachTo: document.body
+    });
+    await w.find(".opt-btn").trigger("click");
+    await nextTick();
+    const sel = w.findAll(".opt-hint").filter((i) => i.attributes("aria-selected") === "true");
+    expect(sel.length).toBe(1);
+    expect(sel[0]!.find(".opt-hint-n").text()).toBe("3");
     w.unmount();
   });
 
@@ -179,18 +196,32 @@ describe("オプション欄の選択肢（UI）", () => {
       w.unmount();
     });
 
-    it("キーイベントを購読しない（矢印・Esc は素通り）", async () => {
+    it("**Esc はリスト内で握り潰す**（開いている間は他の Esc 割当を発火させない）", async () => {
       const w = mountGrid(true);
-      await firstOptInput(w).trigger("focus");
-      await nextTick();
       await w.find(".opt-btn").trigger("click");
       await nextTick();
       const pop = w.find(".opt-hints").element as HTMLElement;
-      for (const type of ["keydown", "keyup", "keypress"]) {
-        const ev = new KeyboardEvent(type, { key: "Escape", bubbles: true, cancelable: true });
-        pop.dispatchEvent(ev);
-        expect(ev.defaultPrevented).toBe(false);
-      }
+
+      let reachedGrid = false;
+      w.element.addEventListener("keydown", () => { reachedGrid = true; });
+      const ev = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+      pop.dispatchEvent(ev);
+      await nextTick();
+
+      expect(ev.defaultPrevented).toBe(true);
+      expect(reachedGrid).toBe(false); // 伝播しない＝矩形選択の解除等が走らない
+      expect(w.find(".opt-hints").exists()).toBe(false); // 閉じている
+      w.unmount();
+    });
+
+    it("Esc・矢印以外のキーは素通りする", async () => {
+      const w = mountGrid(true);
+      await w.find(".opt-btn").trigger("click");
+      await nextTick();
+      const pop = w.find(".opt-hints").element as HTMLElement;
+      const ev = new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true });
+      pop.dispatchEvent(ev);
+      expect(ev.defaultPrevented).toBe(false);
       w.unmount();
     });
   });

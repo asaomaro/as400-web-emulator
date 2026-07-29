@@ -672,6 +672,16 @@ function onKeydown(ev: KeyboardEvent): void {
   // 明示的に処理するのは、下の isProtectedEdit が Space を preventDefault してしまい
   // native の Space 起動が効かなくなるため。**Enter は 5250 の AID として残す**——端末で最も
   // 重要なキーを、たまたまボタンにフォーカスがあるという理由で奪わない（decisions D5）。
+  // **オプション選択肢のリストが開いている間は、リスト内のキー操作を優先する。**
+  // Esc（矩形選択の解除等）や矢印がリストより先に発火すると、閉じる前に別の動作が起きる
+  // ——「ドロップダウンリストが閉じるまで発火しないように」という利用者指示。
+  if (
+    gridRef.value?.optHintsOpen?.() &&
+    ev.target instanceof HTMLElement &&
+    ev.target.closest(".opt-hints")
+  ) {
+    return;
+  }
   // **Alt+↓ でオプション欄のドロップダウンを開く**（コンボボックスの慣用キー）。
   // フォーカスしただけでは開かない——一覧を移動するたびにリストが視界を塞ぐため。
   // `Alt+矢印` はペイン移動から `Alt+Shift+矢印` へ移してここを空けた（App.vue）。
