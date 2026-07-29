@@ -167,6 +167,36 @@ describe("③ 帳票の誤検出", () => {
   });
 });
 
+describe("既知の制限: 大きい窓から小さい窓へ戻ると判定が外れる", () => {
+  /** 画面いっぱいの大きい窓（拡張ヘルプ相当） */
+  const BIG = {
+    2: pad(2, ".".repeat(78)),
+    ...Object.fromEntries([...Array(20).keys()].map((i) => [i + 3, pad(2, ":") + pad(77, ":")])),
+    23: pad(2, ".".repeat(78))
+  };
+  /** 元のヘルプ窓（小さい）。大きい窓が占めていた外側は背景へ戻っている */
+  const SMALL = {
+    1: "MAIN                        IBM I メインメニュー",
+    8: pad(20, ".".repeat(40)),
+    ...Object.fromEntries([...Array(4).keys()].map((i) => [i + 9, pad(20, ":") + pad(19, ":")])),
+    13: pad(20, ".".repeat(40)),
+    20: "background text restored"
+  };
+
+  it("**大きい窓 → 小さい窓では窓と判定されない**（原理的な制限。直っていたら見直すこと）", () => {
+    // この判定は「窓は背景の上に開く＝枠の外は前のまま」という前提に立っている。
+    // 窓が縮むと、大きい窓が占めていた領域が背景で描き直され、それが小さい窓の枠外に当たる。
+    // 通常画面への遷移とまったく同じ形なので、前画面 1 枚では区別できない。
+    // 費用に見合わないため制限事項として受け入れた（利用者判断 2026-07-29）。
+    expect(detectWindowRect(synth(SMALL))).not.toBeNull(); // 前画面なしなら窓として拾える
+    expect(detectWindowRect(synth(SMALL), undefined, synth(BIG))).toBeNull(); // ← 制限
+  });
+
+  it("小さい窓 → 大きい窓（広がる方向）は判定できる", () => {
+    expect(detectWindowRect(synth(BIG), undefined, synth(SMALL))).not.toBeNull();
+  });
+});
+
 describe("同じ画面の無変化な再描画", () => {
   it("sameScreen が true になる（呼び出し側は判定を更新しない）", () => {
     expect(sameScreen(synth(TABLE), synth(TABLE))).toBe(true);
