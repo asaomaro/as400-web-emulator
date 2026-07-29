@@ -748,6 +748,10 @@ function onKeydown(ev: KeyboardEvent): void {
 let wheelCooldownUntil = 0;
 function onWheel(ev: WheelEvent): void {
   if (Math.abs(ev.deltaY) < 4) return; // 微小ジッタは無視
+  // **オプション選択肢のリスト上ではリスト自身をスクロールさせる。**
+  // ここで preventDefault すると native スクロールが死に、さらにホストへ Roll（PageUp/Down）が
+  // 飛んでしまう——リストを送っただけで画面が送られるのは明らかに誤り。
+  if (ev.target instanceof HTMLElement && ev.target.closest(".opt-hints")) return;
   ev.preventDefault(); // 端末はスクロールせずページ送りに割り当てる（ACS 準拠）
   if (busy.value || snapshot.value?.keyboardLocked) return; // 通信中・ロック中は送らない
   const now = Date.now();

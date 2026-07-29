@@ -37,7 +37,7 @@ import {
   type OptionSpan
 } from "../composables/fkeyLegend.js";
 import { GRID_COLOR } from "@as400web/core/browser";
-import type { ButtonStyle, WindowFrame, WindowBackdrop, SbcsView } from "../stores/viewSettings.js";
+import type { ButtonStyle, WindowFrame, WindowBackdrop, SbcsView, OptHintStyle } from "../stores/viewSettings.js";
 import { MSG_PROTECTED, MSG_NO_ROOM, MSG_BY_REASON, MSG_OPT_HINTS } from "../composables/opMessages.js";
 import { fitFont, MIN_FONT_PX, MAX_FONT_PX } from "../composables/fitFont.js";
 import { fieldAt, caretInField, roundToDbcsLead, wordRangeAt } from "../composables/useCursor.js";
@@ -90,10 +90,10 @@ const props = withDefaults(
     windowFrame?: WindowFrame;
     /** ウィンドウの背景（窓の外側）の見せ方。none は背景に何もしない */
     windowBackdrop?: WindowBackdrop;
-    /** オプション欄の選択肢を出すか（既定 OFF。推測を含む機能は勝手に有効化しない） */
-    optHints?: boolean;
+    /** オプション欄の選択肢の見せ方（既定 none。推測を含む機能は勝手に有効化しない） */
+    optHints?: OptHintStyle;
   }>(),
-  { linkify: true, buttons: "none", windowFrame: "none", windowBackdrop: "none", optHints: false, sbcsView: "host" }
+  { linkify: true, buttons: "none", windowFrame: "none", windowBackdrop: "none", optHints: "none", sbcsView: "host" }
 );
 const emit = defineEmits<{
   (e: "edit", fieldIndex: number, value: string): void;
@@ -822,7 +822,9 @@ const legendsByRow = computed<Map<number, FkeySpan[]>>(() => {
  *
  * 検出は snapshot だけに依存させる（入力のたびに走らせない。`legendsByRow` と同じ理由）。
  */
-const optionHints = computed(() => (props.optHints ? detectOptionHints(props.snapshot, displayChar) : null));
+const optionHints = computed(() =>
+  props.optHints === "none" ? null : detectOptionHints(props.snapshot, displayChar)
+);
 
 /** フォーカス中の入力欄。ポップオーバーの開閉はこれに**完全に従属**させる。 */
 const focusedField = ref<Field | null>(null);
@@ -2965,6 +2967,7 @@ onBeforeUnmount(() => {
     class="grid"
     :style="{ fontSize: fontPx + 'px' }"
     :data-focused="focused"
+    :data-opt-hints="optHints"
     @click="onGridClick"
     @dblclick="onGridDblclick"
     @mousedown="onGridMousedown"
@@ -3316,6 +3319,11 @@ onBeforeUnmount(() => {
   background-position: 0 0.625em;
 }
 /* WDWBORDER: ホスト指定の罫線文字で描く枠。文字なので等幅グリッドにそのまま乗る */
+/**
+ * オプション欄の選択肢。**テーマ変数（styles.css）に乗せる**——独自の変数名を使うと
+ * フォールバックの黒が常に出て、ライトテーマでも背景が黒くなる（実画面で発生した）。
+ * 意匠は画面設定「オプション選択肢」（`data-opt-hints`）で切り替える。
+ */
 .opt-btn {
   /* 欄の右隣 1 桁にちょうど収まる。桁割りには影響しない（絶対配置） */
   position: absolute;
@@ -3326,11 +3334,11 @@ onBeforeUnmount(() => {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--accent, #7ab8ff);
+  color: var(--accent);
   font: inherit;
   line-height: 1.25;
   cursor: pointer;
-  opacity: 0.75;
+  opacity: 0.7;
 }
 .opt-btn:hover,
 .opt-btn:focus-visible {
@@ -3341,29 +3349,31 @@ onBeforeUnmount(() => {
   /* .gui-window と同じグリッド padding 分の補正。絶対配置なので桁割りには影響しない */
   position: absolute;
   margin: 8px 0 0 10px;
-  z-index: 6;
+  z-index: 7;
   display: flex;
   flex-direction: column;
-  min-width: 12ch;
+  min-width: 14ch;
   max-height: 14em;
   overflow-y: auto;
   padding: 2px;
-  border: 1px solid var(--border, #5a5a5a);
-  border-radius: 4px;
-  background: var(--panel-bg, #1c1c1c);
-  box-shadow: 0 4px 12px rgb(0 0 0 / 35%);
-  font-size: 0.85em;
-  line-height: 1.4;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 28%);
+  font-family: var(--sans);
+  font-size: 0.8em;
+  line-height: 1.5;
 }
 .opt-hint {
   display: flex;
-  gap: 0.6em;
+  gap: 0.7em;
   align-items: baseline;
-  padding: 2px 6px;
+  padding: 2px 7px;
   border: 0;
-  border-radius: 3px;
+  border-radius: 4px;
   background: transparent;
-  color: var(--fg, #ddd);
+  color: inherit;
   font: inherit;
   text-align: left;
   white-space: nowrap;
@@ -3371,17 +3381,48 @@ onBeforeUnmount(() => {
 }
 .opt-hint:hover,
 .opt-hint:focus-visible {
-  background: var(--hover-bg, #333);
+  background: var(--accent-soft);
 }
 .opt-hint[aria-selected="true"] {
-  outline: 1px solid var(--accent, #7ab8ff);
+  outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
 .opt-hint-n {
   min-width: 2ch;
-  color: var(--accent, #7ab8ff);
+  color: var(--accent);
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+.opt-hint-l {
+  color: var(--muted);
+}
+
+/* 枠: 面を持たず輪郭だけ。画面の内容を隠しすぎたくないとき */
+.grid[data-opt-hints="outline"] .opt-hints {
+  background: var(--paper);
+  border-color: var(--accent);
+  box-shadow: none;
+}
+
+/* 端末調: CRT の緑に寄せる。画面と地続きに見せたいとき */
+.grid[data-opt-hints="crt"] .opt-hints {
+  background: var(--crt-bezel);
+  color: var(--t-green);
+  border-color: var(--crt-line);
+  font-family: var(--screen-mono);
+}
+.grid[data-opt-hints="crt"] .opt-hint-n {
+  color: var(--t-yellow);
+}
+.grid[data-opt-hints="crt"] .opt-hint-l {
+  color: var(--t-green);
+}
+.grid[data-opt-hints="crt"] .opt-hint:hover,
+.grid[data-opt-hints="crt"] .opt-hint:focus-visible {
+  background: var(--crt-line);
+}
+.grid[data-opt-hints="crt"] .opt-btn {
+  color: var(--t-turquoise);
 }
 
 .gui-window-border {

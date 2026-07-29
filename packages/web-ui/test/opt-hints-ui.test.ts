@@ -65,7 +65,7 @@ function snapOf(fields: Field[] = OPT_FIELDS): ScreenSnapshot {
   } as ScreenSnapshot;
 }
 
-function mountGrid(optHints: boolean) {
+function mountGrid(optHints: "none" | "panel") {
   return mount(ScreenGrid, {
     props: { snapshot: snapOf(), edits: new Map(), focused: true, optHints },
     attachTo: document.body
@@ -77,7 +77,7 @@ const firstOptInput = (w: ReturnType<typeof mountGrid>) =>
 
 describe("オプション欄の選択肢（UI）", () => {
   it("既定（設定 OFF）では欄にフォーカスしても何も出ない", async () => {
-    const w = mountGrid(false);
+    const w = mountGrid("none");
     await firstOptInput(w).trigger("focus");
     await nextTick();
     expect(w.find(".opt-hints").exists()).toBe(false);
@@ -85,7 +85,7 @@ describe("オプション欄の選択肢（UI）", () => {
   });
 
   it("設定 ON でも**フォーカスだけではリストが出ない**（ボタンだけ出る）", async () => {
-    const w = mountGrid(true);
+    const w = mountGrid("panel");
     await firstOptInput(w).trigger("focus");
     await nextTick();
     expect(w.find(".opt-hints").exists()).toBe(false);
@@ -97,7 +97,7 @@ describe("オプション欄の選択肢（UI）", () => {
   });
 
   it("ボタンを押すとリストが開き、タブ順に入る", async () => {
-    const w = mountGrid(true);
+    const w = mountGrid("panel");
     await firstOptInput(w).trigger("focus");
     await nextTick();
     await w.find(".opt-btn").trigger("click");
@@ -123,7 +123,7 @@ describe("オプション欄の選択肢（UI）", () => {
           index: i, row, col: 2, length: 2,
           protected: false, numeric: false, hidden: false, mdt: false, value: "  "
         }))),
-        edits: new Map(), focused: true, optHints: true
+        edits: new Map(), focused: true, optHints: "panel"
       },
       attachTo: document.body
     });
@@ -133,13 +133,13 @@ describe("オプション欄の選択肢（UI）", () => {
   });
 
   it("ボタンは**フォーカスに関係なく各 Opt 行に常時**出る", () => {
-    const w = mountGrid(true);
+    const w = mountGrid("panel");
     expect(w.findAll(".opt-btn").length).toBe(OPT_FIELDS.length);
     w.unmount();
   });
 
   it("開いたら**選択中（無ければ先頭）の項目にフォーカスが移る**", async () => {
-    const w = mountGrid(true);
+    const w = mountGrid("panel");
     await firstOptInput(w).trigger("focus");
     await nextTick();
     await w.find(".opt-btn").trigger("click");
@@ -152,7 +152,7 @@ describe("オプション欄の選択肢（UI）", () => {
   it("**既に入っている値が選択肢にあれば選択状態にする**", async () => {
     const fields = OPT_FIELDS.map((f, i) => (i === 0 ? { ...f, value: "3 " } : f));
     const w = mount(ScreenGrid, {
-      props: { snapshot: snapOf(fields), edits: new Map(), focused: true, optHints: true },
+      props: { snapshot: snapOf(fields), edits: new Map(), focused: true, optHints: "panel" },
       attachTo: document.body
     });
     await w.find(".opt-btn").trigger("click");
@@ -165,7 +165,7 @@ describe("オプション欄の選択肢（UI）", () => {
 
   describe("矩形選択・クリップボードを妨げない", () => {
     it("ポップオーバーの mousedown はグリッドへ伝播しない", async () => {
-      const w = mountGrid(true);
+      const w = mountGrid("panel");
       await firstOptInput(w).trigger("focus");
       await nextTick();
       await w.find(".opt-btn").trigger("click");
@@ -180,7 +180,7 @@ describe("オプション欄の選択肢（UI）", () => {
     });
 
     it("項目の mousedown もグリッドへ伝播せず、既定動作（フォーカス移動）も止める", async () => {
-      const w = mountGrid(true);
+      const w = mountGrid("panel");
       await firstOptInput(w).trigger("focus");
       await nextTick();
       await w.find(".opt-btn").trigger("click");
@@ -197,7 +197,7 @@ describe("オプション欄の選択肢（UI）", () => {
     });
 
     it("**Esc はリスト内で握り潰す**（開いている間は他の Esc 割当を発火させない）", async () => {
-      const w = mountGrid(true);
+      const w = mountGrid("panel");
       await w.find(".opt-btn").trigger("click");
       await nextTick();
       const pop = w.find(".opt-hints").element as HTMLElement;
@@ -215,7 +215,7 @@ describe("オプション欄の選択肢（UI）", () => {
     });
 
     it("Esc・矢印以外のキーは素通りする", async () => {
-      const w = mountGrid(true);
+      const w = mountGrid("panel");
       await w.find(".opt-btn").trigger("click");
       await nextTick();
       const pop = w.find(".opt-hints").element as HTMLElement;
@@ -226,8 +226,22 @@ describe("オプション欄の選択肢（UI）", () => {
     });
   });
 
+  describe("見せ方の設定", () => {
+    it("既定（none）では検出も走らせない", () => {
+      const w = mountGrid("none");
+      expect(w.findAll(".opt-btn").length).toBe(0);
+      w.unmount();
+    });
+
+    it("意匠は data 属性で切り替える（CSS の当て先）", () => {
+      const w = mountGrid("panel");
+      expect(w.element.getAttribute("data-opt-hints")).toBe("panel");
+      w.unmount();
+    });
+  });
+
   it("選ぶと欄へ番号が入る", async () => {
-    const w = mountGrid(true);
+    const w = mountGrid("panel");
     await firstOptInput(w).trigger("focus");
     await nextTick();
     await w.find(".opt-btn").trigger("click");

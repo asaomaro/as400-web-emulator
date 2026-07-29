@@ -99,3 +99,23 @@
   グリッドの操作を妨げない。非干渉の担保（`mousedown.stop.prevent`）はそのまま維持している。
 - **blur では閉じない**に変更。リストへフォーカスを移す時点で欄は blur するため、
   blur で閉じると開いた瞬間に閉じてしまう。閉じるのは Esc・選択・画面更新のとき。
+
+## D7: 実画面の追加指摘（ホイール・テーマ・意匠設定）
+
+1. **リスト上のホイールがホストへ Roll を送っていた** — `onWheel` は無条件に
+   `preventDefault` してから `PageDown`/`PageUp` を送る（ACS 準拠のページ送り）。
+   リストの上でも同じ経路に入るため、**リストが動かずに画面が送られる**という明らかな誤り。
+   → target が `.opt-hints` の内側なら早期 return（native スクロールに任せ、Roll も送らない）。
+   PageUp/PageDown **キー**は `onKeydown` 先頭のガード（D6）で既に届かない。
+
+2. **背景が常に黒だった** — `--panel-bg` / `--fg` / `--border` / `--hover-bg` という
+   **このリポジトリに存在しない変数名**を使っており、フォールバックの黒が常に適用されていた。
+   → `styles.css` の実在する変数（`--card` / `--ink` / `--line` / `--accent` /
+   `--accent-soft` / `--muted`）に載せ替え。ライト/ダーク/システムの 3 テーマに追従する
+   （`docs/UI-DESIGN.md` の「配色は CSS 変数で一元化」）。
+
+3. **意匠を設定から選べるように** — `optHints` を `boolean` から
+   `OptHintStyle`（`none` / `panel` / `outline` / `crt`）へ変更。`buttons`（ボタン設定）と
+   同じ `wide` + `expandable` の形にしたので、**画面設定メニューとキー設定の両方に自動で出る**。
+   既定は `none`（推測を含む機能は勝手に有効化しない、を維持）。
+   CSS は `.grid[data-opt-hints="…"]` で当てる。
