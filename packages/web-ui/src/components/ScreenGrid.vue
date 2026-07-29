@@ -817,19 +817,54 @@ const optionHints = computed(() => (props.optHints ? detectOptionHints(props.sna
 const focusedField = ref<Field | null>(null);
 
 /**
- * 出すべき選択肢と位置。フォーカス中の欄が Opt 列に属するときだけ返す。
+ * **フォーカス中の欄が Opt 列に属するか**（ボタンを出す条件）。
  *
- * **開閉をフォーカスだけで決めるのが要**（利用者指示）。キーイベントを 1 つも購読しないので、
- * 矢印・Tab・Enter・Esc は今日とまったく同じ経路を通る。矩形選択が始まると
- * `onGridDragMove` が入力欄を blur するため、**選択開始と同時に自然に閉じる**。
+ * ここではリストを開かない。**フォーカスしただけでリストが出ると、一覧を移動するたびに
+ * 視界を塞ぐ**（利用者指摘）。出すのは右隣 1 桁のボタンだけで、開くのは明示操作のとき。
  */
-const optPopover = computed<{ row: number; col: number; options: OptionSpan[] } | null>(() => {
+const optTarget = computed<{ row: number; col: number; options: OptionSpan[] } | null>(() => {
   const hints = optionHints.value;
   const f = focusedField.value;
   if (!hints || !f) return null;
   if (f.col !== hints.column.col || !hints.column.rows.includes(f.row)) return null;
   return { row: f.row, col: f.col, options: hints.options };
 });
+
+/**
+ * ボタンを置く桁（欄の右隣 1 桁）。**そこが実際に空いているときだけ**返す。
+ *
+ * 【DSPF で実地検証した根拠 — 実機 SR-OSAKA 2026-07-29 / `scripts/probe-opt-adjacency.mjs`】
+ * 5250 の SF オーダーは属性バイトを**欄の手前**に置くので、欄と欄の間には最低 1 桁の隙間が要る。
+ * 実際に隙間 0 の DSPF を作ると**コンパイルは通るのに実行時に 2 つ目の欄が消えた**。
+ * よって**入力欄が右隣に来ることは無い**。
+ *
+ * ただし**「必ず属性バイト」ではない**。隙間 1 桁のときは `kind=attr` だったが、
+ * 単独の欄や定数を置こうとした欄の右隣は**素の `sbcs` 空白**だった（閉じ属性が送られない）。
+ * なので kind で決め打たず、**表示文字が空白であること**を実行時に見る。
+ */
+const optButtonCol = computed<number | null>(() => {
+  const t = optTarget.value;
+  if (!t) return null;
+  const col = t.col + (optionHints.value?.column.length ?? 0);
+  if (col > props.snapshot.cols) return null;
+  const c = props.snapshot.cells[t.row - 1]?.[col - 1];
+  if (!c) return null;
+  return displayChar(c) === " " ? col : null; // 埋まっていれば出さない
+});
+
+/** リストを開いているか。**明示操作（ボタン押下 / Alt+↓）でだけ true になる** */
+const optOpen = ref(false);
+watch(optTarget, (t) => { if (!t) optOpen.value = false; });
+
+/** 表示するリスト（開いているときだけ） */
+const optPopoverShown = computed(() => (optOpen.value ? optTarget.value : null));
+
+/** Alt+↓ で開く（ペインの onKeydown から呼ぶ）。開ければ true */
+function openOptHints(): boolean {
+  if (!optTarget.value) return false;
+  optOpen.value = true;
+  return true;
+}
 
 /**
  * 選択肢を選んだ: **既存の貼り付け経路**で欄へ書く（値を直接いじらない）。
@@ -842,6 +877,8 @@ function chooseOption(o: OptionSpan): void {
   if (!f) return;
   const el = inputForSlice(f, 0);
   pasteFrom({ row: f.row, col: f.col }, o.value, el ? { f, el, startOffset: 0 } : undefined);
+  optOpen.value = false;
+  el?.focus(); // 選び終わったら欄へ戻す（以降の打鍵は通常どおり）
 }
 
 /**
@@ -2826,7 +2863,9 @@ defineExpose({
   eraseEof: eraseEofKey,
   eraseInput: eraseInputKey,
   // 画面桁の表示文字（未送信の入力値込み）。ペインの頭出し（Ctrl+矢印）が語の判定に使う
-  screenCharAt: charAtForCopy
+  screenCharAt: charAtForCopy,
+  // オプション欄のドロップダウンを開く（ペインの Alt+↓ から呼ぶ）
+  openOptHints
 });
 
 // 画面が更新されたら矩形選択は破棄する
@@ -2875,20 +2914,38 @@ onBeforeUnmount(() => {
         - キーイベントは 1 つも購読しない（Esc すら捕まえない）
       絶対配置なので <input> の桁割りには一切触れない。
     -->
+    <!--
+      右隣 1 桁のボタン。**リストは開かない**——開くのはクリックか Alt+↓ のときだけ。
+      tabindex は開いている間だけ 0 にする: 常にタブ順へ入れると一覧を Tab で降りるときの
+      停止数が倍になり、既存の使い勝手が変わってしまう。
+    -->
+    <button
+      v-if="optTarget && optButtonCol"
+      type="button"
+      class="opt-btn"
+      :style="optHintStyle({ row: optTarget.row - 1, col: optButtonCol })"
+      :tabindex="optOpen ? 0 : -1"
+      :aria-expanded="optOpen"
+      :aria-label="MSG_OPT_HINTS"
+      @mousedown.stop.prevent
+      @click.stop="optOpen = !optOpen"
+    >▾</button>
+
     <div
-      v-if="optPopover"
+      v-if="optPopoverShown"
       class="opt-hints"
-      :style="optHintStyle(optPopover)"
+      :style="optHintStyle(optPopoverShown)"
       role="listbox"
       :aria-label="MSG_OPT_HINTS"
       @mousedown.stop.prevent
     >
       <button
-        v-for="o in optPopover.options"
+        v-for="o in optPopoverShown.options"
         :key="o.value"
         type="button"
         class="opt-hint"
         role="option"
+        :tabindex="0"
         :aria-selected="false"
         @mousedown.stop.prevent
         @click.stop="chooseOption(o)"
@@ -3179,6 +3236,27 @@ onBeforeUnmount(() => {
   background-position: 0 0.625em;
 }
 /* WDWBORDER: ホスト指定の罫線文字で描く枠。文字なので等幅グリッドにそのまま乗る */
+.opt-btn {
+  /* 欄の右隣 1 桁にちょうど収まる。桁割りには影響しない（絶対配置） */
+  position: absolute;
+  margin: 8px 0 0 10px;
+  z-index: 6;
+  width: 1ch;
+  height: 1.25em;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent, #7ab8ff);
+  font: inherit;
+  line-height: 1.25;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.opt-btn:hover,
+.opt-btn:focus-visible {
+  opacity: 1;
+}
+
 .opt-hints {
   /* .gui-window と同じグリッド padding 分の補正。絶対配置なので桁割りには影響しない */
   position: absolute;

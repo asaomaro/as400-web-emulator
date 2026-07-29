@@ -667,15 +667,27 @@ function onKeydown(ev: KeyboardEvent): void {
   // ここへバブルしてくるため。Esc を SysReq に割り当てていると（利用者の想定用途そのもの）、
   // 取り消しの Esc がそのまま再び行を開いてしまい、二度と閉じられなくなる。
   if (sysReqOpen.value || (ev.target instanceof HTMLElement && ev.target.closest(".sysreq"))) return;
-  // 機能キーボタンにフォーカスがあるときの Space は「そのボタンを押す」（普通のボタンと同じ）。
+  // 機能キーボタン・オプション選択肢のボタンにフォーカスがあるときの Space は
+  // 「そのボタンを押す」（普通のボタンと同じ）。
   // 明示的に処理するのは、下の isProtectedEdit が Space を preventDefault してしまい
   // native の Space 起動が効かなくなるため。**Enter は 5250 の AID として残す**——端末で最も
   // 重要なキーを、たまたまボタンにフォーカスがあるという理由で奪わない（decisions D5）。
+  // **Alt+↓ でオプション欄のドロップダウンを開く**（コンボボックスの慣用キー）。
+  // フォーカスしただけでは開かない——一覧を移動するたびにリストが視界を塞ぐため。
+  // `Alt+矢印` はペイン移動から `Alt+Shift+矢印` へ移してここを空けた（App.vue）。
+  if (ev.altKey && !ev.shiftKey && !ev.ctrlKey && !ev.metaKey && ev.key === "ArrowDown") {
+    if (gridRef.value?.openOptHints()) {
+      ev.preventDefault();
+      return;
+    }
+  }
   const focusedBtn = document.activeElement;
   if (
     ev.key === " " &&
     focusedBtn instanceof HTMLButtonElement &&
-    focusedBtn.classList.contains("fkey-btn") &&
+    (focusedBtn.classList.contains("fkey-btn") ||
+      focusedBtn.classList.contains("opt-btn") ||
+      focusedBtn.classList.contains("opt-hint")) &&
     paneEl.value?.contains(focusedBtn)
   ) {
     ev.preventDefault();

@@ -17,7 +17,9 @@ import type { Cell, Field, ScreenSnapshot } from "@as400web/core";
  *    （**入力欄にフォーカスを残す**。奪うと貼り付け先が変わる）
  * 3. **キーイベントを 1 つも購読しない**（矢印・Tab・Enter・Esc は今日と同じ経路）
  *
- * 開閉はフォーカスにのみ従属するので、矩形選択が始まって入力欄が blur された時点で自然に閉じる。
+ * **フォーカスしただけではリストを開かない**（利用者指摘: 一覧を移動するたびに視界を塞ぐ）。
+ * 出るのは右隣 1 桁のボタンだけで、開くのはクリックか `Alt+↓` のとき。
+ * ボタンをタブ順に入れるのも**開いている間だけ**——常時入れると一覧を Tab で降りる停止数が倍になる。
  */
 
 const SID = "opt1";
@@ -48,7 +50,8 @@ const LINES: string[] = (() => {
   return l;
 })();
 
-const OPT_FIELDS: Field[] = [10, 11, 12, 13].map((row, i) => ({
+// 画面行 11-14（LINES[10..13]）。**行 10 はヘッダー `OPT …` で c4 が埋まっている**ので避ける
+const OPT_FIELDS: Field[] = [11, 12, 13, 14].map((row, i) => ({
   index: i, row, col: 2, length: 2,
   protected: false, numeric: false, hidden: false, mdt: false, value: "  "
 }));
@@ -81,12 +84,28 @@ describe("オプション欄の選択肢（UI）", () => {
     w.unmount();
   });
 
-  it("設定 ON かつ Opt 欄にフォーカスすると選択肢が出る", async () => {
+  it("設定 ON でも**フォーカスだけではリストが出ない**（ボタンだけ出る）", async () => {
     const w = mountGrid(true);
     await firstOptInput(w).trigger("focus");
     await nextTick();
+    expect(w.find(".opt-hints").exists()).toBe(false);
+    const btn = w.find(".opt-btn");
+    expect(btn.exists()).toBe(true);
+    // 開くまではタブ順に入れない（一覧を Tab で降りる停止数を増やさない）
+    expect(btn.attributes("tabindex")).toBe("-1");
+    w.unmount();
+  });
+
+  it("ボタンを押すとリストが開き、タブ順に入る", async () => {
+    const w = mountGrid(true);
+    await firstOptInput(w).trigger("focus");
+    await nextTick();
+    await w.find(".opt-btn").trigger("click");
+    await nextTick();
     const pop = w.find(".opt-hints");
     expect(pop.exists()).toBe(true);
+    expect(w.find(".opt-btn").attributes("tabindex")).toBe("0");
+    expect(w.findAll(".opt-hint").every((i) => i.attributes("tabindex") === "0")).toBe(true);
     expect(pop.attributes("aria-label")).toBe(MSG_OPT_HINTS);
     const items = w.findAll(".opt-hint");
     expect(items.map((i) => i.find(".opt-hint-n").text())).toEqual(["2", "3", "4", "5", "8", "9"]);
@@ -94,10 +113,31 @@ describe("オプション欄の選択肢（UI）", () => {
     w.unmount();
   });
 
+  it("**右隣 1 桁が埋まっていればボタンを出さない**", () => {
+    // DSPF 検証（scripts/probe-opt-adjacency.mjs）のとおり、右隣に入力欄は来ないが
+    // 「必ず属性バイト（空白）」ではない——閉じ属性を送らないと定数が来うる。
+    // 行 10 はヘッダー `OPT …` で c4 が `T` に埋まっているので、そこには出さない
+    const w = mount(ScreenGrid, {
+      props: {
+        snapshot: snapOf([10, 11, 12].map((row, i) => ({
+          index: i, row, col: 2, length: 2,
+          protected: false, numeric: false, hidden: false, mdt: false, value: "  "
+        }))),
+        edits: new Map(), focused: true, optHints: true
+      },
+      attachTo: document.body
+    });
+    w.find('input.grid-input[data-field-index="0"]').trigger("focus");
+    expect(w.find(".opt-btn").exists()).toBe(false);
+    w.unmount();
+  });
+
   it("フォーカスが外れると閉じる（矩形選択の開始は入力欄を blur するのでここに合流する）", async () => {
     const w = mountGrid(true);
     const el = firstOptInput(w);
     await el.trigger("focus");
+    await nextTick();
+    await w.find(".opt-btn").trigger("click");
     await nextTick();
     expect(w.find(".opt-hints").exists()).toBe(true);
     await el.trigger("blur");
@@ -111,6 +151,8 @@ describe("オプション欄の選択肢（UI）", () => {
       const w = mountGrid(true);
       await firstOptInput(w).trigger("focus");
       await nextTick();
+      await w.find(".opt-btn").trigger("click");
+      await nextTick();
 
       let reached = false;
       w.element.addEventListener("mousedown", () => { reached = true; });
@@ -123,6 +165,8 @@ describe("オプション欄の選択肢（UI）", () => {
     it("項目の mousedown もグリッドへ伝播せず、既定動作（フォーカス移動）も止める", async () => {
       const w = mountGrid(true);
       await firstOptInput(w).trigger("focus");
+      await nextTick();
+      await w.find(".opt-btn").trigger("click");
       await nextTick();
 
       let reached = false;
@@ -139,6 +183,8 @@ describe("オプション欄の選択肢（UI）", () => {
       const w = mountGrid(true);
       await firstOptInput(w).trigger("focus");
       await nextTick();
+      await w.find(".opt-btn").trigger("click");
+      await nextTick();
       const pop = w.find(".opt-hints").element as HTMLElement;
       for (const type of ["keydown", "keyup", "keypress"]) {
         const ev = new KeyboardEvent(type, { key: "Escape", bubbles: true, cancelable: true });
@@ -152,6 +198,8 @@ describe("オプション欄の選択肢（UI）", () => {
   it("選ぶと欄へ番号が入る", async () => {
     const w = mountGrid(true);
     await firstOptInput(w).trigger("focus");
+    await nextTick();
+    await w.find(".opt-btn").trigger("click");
     await nextTick();
     await w.findAll(".opt-hint")[1]!.trigger("click"); // 3=コピー
     await nextTick();
