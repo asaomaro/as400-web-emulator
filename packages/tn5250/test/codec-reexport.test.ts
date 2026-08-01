@@ -33,13 +33,13 @@ import { TEXT_CCSIDS as catalogCcsids, ccsidLabel as catalogLabel } from "../src
  * （`errors-compat.test.ts` 参照）ので、同じ轍を踏まないよう到達可能性を実行時に押さえる。
  *
  * 外の利用者は現時点で次の 4 経路:
- *   - `@as400web/core`         … server の `pdf.ts` / `host-spools.ts`（`LogicalPage`）
- *   - `@as400web/core/codec`   … server の `host-dtaq.ts`（`codecForCcsid`）
- *   - `@as400web/core/browser` … web-ui の `IfsPane.vue`（`TEXT_CCSIDS` / `ccsidLabel`）、
+ *   - `@as400web/tn5250`         … server の `pdf.ts` / `host-spools.ts`（`LogicalPage`）
+ *   - `@as400web/tn5250/codec`   … server の `host-dtaq.ts`（`codecForCcsid`）
+ *   - `@as400web/tn5250/browser` … web-ui の `IfsPane.vue`（`TEXT_CCSIDS` / `ccsidLabel`）、
  *                                `ScreenGrid.vue`（`katakanaChar`）
  *   - `@as400web/ebcdic` 直接  … 本リポジトリ内の core（切り出し後の正規の経路）
  */
-describe("codec / SCS の再輸出（@as400web/core 経由の後方互換）", () => {
+describe("codec / SCS の再輸出（@as400web/tn5250 経由の後方互換）", () => {
   it("root から文字変換の公開面がすべて取れる", () => {
     for (const sym of [
       SbcsCodec,

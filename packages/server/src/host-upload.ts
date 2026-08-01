@@ -19,7 +19,7 @@ import { z } from "zod";
 import { As400Error, assertIdentifier } from "@as400web/base";
 import { childLog } from "./log.js";
 import { InsertEncodeError, fetchColumnLayout, insertRows, prepareUpload, type UploadRejection } from "@as400web/hostserver";
-import { type ConnectOptions } from "@as400web/core";
+import { type ConnectOptions } from "@as400web/tn5250";
 import { parseCsv } from "@as400web/base";
 import type { AuthVars } from "./auth.js";
 import type { ConfigResolver } from "./config-resolver.js";

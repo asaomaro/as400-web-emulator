@@ -1,7 +1,7 @@
 /**
  * `@as400web/base` 公開 API。
  *
- * IBM i を相手にする各パッケージ（`@as400web/core` = TN5250、`@as400web/hostserver` =
+ * IBM i を相手にする各パッケージ（`@as400web/tn5250` = TN5250、`@as400web/hostserver` =
  * ホストサーバー群）が**共有する語彙**だけを置く。ここは「共通で使うものの物置」ではない——
  * **複製すると壊れるもの**の置き場所である。
  *
@@ -11,7 +11,7 @@
  *   パッケージ境界を跨いだ判定が false になる
  *
  * この 2 点が「core に残す」でも「両方に複製する」でもなく独立パッケージにした理由で、
- * `packages/core/test/errors-compat.test.ts` と `log-sink-single-instance.test.ts` が
+ * `packages/tn5250/test/errors-compat.test.ts` と `log-sink-single-instance.test.ts` が
  * 実行時に検査している（`20260801-library-extraction-hostserver` decisions.md D4）。
  *
  * **`export *` は使わない。** 再輸出を機械的に広げると、何が外に出ているのかが目視できなくなる

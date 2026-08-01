@@ -255,7 +255,7 @@ export interface GuiConstructs {
  * 「そのレコードが重ね書きだったか」までで、**窓かどうかを一般に決められはしない**。
  * 消費側（`web-ui/src/composables/fkeyLegend.ts` の `isOverlayWrite`）はこの限界を前提にしている。
  *
- * 通常画面側の裏付けは実機採取レコード（`packages/core/test/fixtures/pub400-*.jsonl`）の再生でも
+ * 通常画面側の裏付けは実機採取レコード（`packages/tn5250/test/fixtures/pub400-*.jsonl`）の再生でも
  * 取れており、**全画面遷移 6/6 すべてに CLEAR が付いていた**。
  */
 export interface WriteExtent {

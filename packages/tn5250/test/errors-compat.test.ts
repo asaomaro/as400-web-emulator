@@ -13,7 +13,7 @@ import { SqlError } from "@as400web/hostserver";
  * **旧名が外に出なくなって server 全体が型エラーになった**。人手の注意ではなく型で守る。
  *
  * **パッケージ分割後は、もう 1 つの役目を兼ねる**（`20260801-library-extraction-hostserver`）。
- * `As400Error` の定義は `@as400web/base` に 1 つだけ在り、`@as400web/core` はそれを再輸出し、
+ * `As400Error` の定義は `@as400web/base` に 1 つだけ在り、`@as400web/tn5250` はそれを再輸出し、
  * `@as400web/hostserver` の `SqlError` はそれを継承している——という**3 パッケージに跨る同一性**を
  * ここで検査する。クラスが複製されると `instanceof` は静かに false になり、
  * `catch (e) { if (e instanceof As400Error) … }` と書いた利用側が黙って壊れる。
@@ -54,7 +54,7 @@ describe("As400Error / Tn5250Error", () => {
     expect(e.code).toBe("SQL_ERROR");
   });
 
-  it("`@as400web/core` が出す As400Error は `@as400web/base` の実体そのもの", () => {
+  it("`@as400web/tn5250` が出す As400Error は `@as400web/base` の実体そのもの", () => {
     // core が再輸出ではなく自前の複製を持ってしまうと、ここが別クラスになる
     expect(As400Error).toBe(BaseAs400Error);
   });

@@ -12,7 +12,7 @@
 //
 // 実行: AS400_PASSWORD=... node scripts/build-sgntest-osaka.mjs
 import { readFileSync } from "node:fs";
-import { Session5250 } from "@as400web/core";
+import { Session5250 } from "@as400web/tn5250";
 import { SecretCrypto } from "../packages/server/dist/secret-crypto.js";
 
 const LIB = "ASAOLIB", DDSF = "QDDSSRC", RPGF = "QRPGLESRC";

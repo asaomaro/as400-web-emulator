@@ -1,8 +1,8 @@
 {
-  "name": "@as400web/core",
+  "name": "@as400web/tn5250",
   "version": "0.1.0",
   "license": "Apache-2.0",
-  "description": "TN5250 protocol core — telnet negotiation, 5250 datastream parser, screen model, trace/replay",
+  "description": "TN5250 terminal protocol for IBM i — telnet negotiation, 5250 datastream parser, screen model, session, and trace/replay.",
   "type": "module",
   "exports": {
     ".": {

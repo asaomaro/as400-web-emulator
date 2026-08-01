@@ -6,7 +6,7 @@ import * as core from "../src/index.js";
 import * as hostserver from "@as400web/hostserver";
 
 /**
- * **`@as400web/core` はホストサーバーを実行時に引かない。**
+ * **`@as400web/tn5250` はホストサーバーを実行時に引かない。**
  *
  * 経緯: `20260801-library-extraction-hostserver`（PR #233）でホストサーバー層を
  * `@as400web/hostserver` へ切り出したとき、利用側を壊さないために core の `index.ts` に
@@ -20,7 +20,7 @@ import * as hostserver from "@as400web/hostserver";
  *
  * **例外は無い（`20260801-library-extraction-cleanup` で無くした）。**
  * 一時は `browser.ts` が hostserver の型を `export type` で中継しており、その 1 点のために
- * `packages/core` が `node:net` を含むパッケージを `dependencies` に持っていた。
+ * `packages/tn5250` が `node:net` を含むパッケージを `dependencies` に持っていた。
  * いまは **web-ui が hostserver を `devDependencies` に持って直接 `import type` する**ので、
  * core は宣言ごと手を切っている。
  *

@@ -21,7 +21,7 @@ import { As400Error } from "@as400web/base";
 import { type LogicalPage } from "@as400web/scs";
 import { listSpooledFiles, type SpoolEntry, type SpoolId, type SpoolListFilter } from "@as400web/hostserver";
 import { renderSpoolHtml } from "@as400web/scs";
-import { type ConnectOptions } from "@as400web/core";
+import { type ConnectOptions } from "@as400web/tn5250";
 import type { AuthVars } from "./auth.js";
 import type { ConfigResolver } from "./config-resolver.js";
 import { openCommand, openNetPrint } from "./host-connect.js";

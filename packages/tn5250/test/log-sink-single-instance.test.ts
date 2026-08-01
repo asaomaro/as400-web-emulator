@@ -10,7 +10,7 @@ import { insertRows, type DbConnection } from "@as400web/hostserver";
  * **ログの差し込み口がパッケージ境界を越えて効くこと。**
  *
  * `log.ts` はモジュールスコープに可変の `factory` を持ち、`setLogSink` がそれを書き換える。
- * だから**複製したら壊れる**——`@as400web/core` と `@as400web/hostserver` がそれぞれ自分の
+ * だから**複製したら壊れる**——`@as400web/tn5250` と `@as400web/hostserver` がそれぞれ自分の
  * `log.ts` を持つと、アプリが起動時に 1 度呼ぶ `setLogSink` は片方にしか効かず、
  * もう片方のログが**黙って消える**。型検査でもビルドでも気づけない。
  * この性質が `errors.ts` とともに `@as400web/base` を独立させた理由そのものである

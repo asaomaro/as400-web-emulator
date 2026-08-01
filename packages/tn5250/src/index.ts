@@ -1,4 +1,4 @@
-// @as400web/core 公開 API
+// @as400web/tn5250 公開 API
 
 // ロガー（stderr 固定。spec D9）
 export {
