@@ -22,8 +22,8 @@
  * 全角の判定は `isFullWidth`（core に一本化した East Asian Width の表）を使う。
  */
 
-import type { LogicalPage } from "@as400web/scs";
-import { isFullWidth } from "../text/east-asian-width.js";
+import type { LogicalPage } from "./scs.js";
+import { isFullWidth } from "@as400web/base";
 
 /** エビデンスの見出しに載せる情報。**日時は呼び出し側が渡す**（この層は時計を持たない） */
 export interface SpoolHtmlMeta {

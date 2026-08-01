@@ -55,8 +55,6 @@ export {
   type PrinterConnectOptions,
   type SpoolReport
 } from "./session/printer-session.js";
-/** SCS デコーダは `@as400web/scs` に分離済み。既存の利用側のために root から再輸出する */
-export { ScsDecoder, type LogicalPage } from "@as400web/scs";
 export {
   parseWdsf,
   GRID_COLOR,
@@ -134,19 +132,11 @@ export {
 
 export { assertIdentifier, isValidIdentifier, IDENTIFIER_PATTERN } from "@as400web/base";
 
-// CSV 解析（取り込みの入口。web-ui と MCP が同じ実装を使う）
-export { parseCsv, type CsvParseResult } from "./csv-parse.js";
-
 // 画面 → 自己完結 HTML（エビデンス出力）
 export {
   renderScreenHtml,
   renderScreenHistoryHtml,
   type ScreenHtmlMeta,
   type ScreenHistoryEntry
-} from "./html/screen-html.js";
+} from "./screen-html.js";
 
-// スプール（帳票）→ 自己完結 HTML。PDF（server 側 `renderSpoolPdf`）の HTML 版
-export { renderSpoolHtml, type SpoolHtmlMeta } from "./html/spool-html.js";
-
-/** 全角判定（East Asian Width）。桁を数える側と描く側で表を分けない */
-export { isFullWidth, isCertainWideGlyph } from "./text/east-asian-width.js";

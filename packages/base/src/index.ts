@@ -40,3 +40,24 @@ export {
 
 // IBM i のオブジェクト名の検証。サーバーとブラウザの両方が使う
 export { assertIdentifier, isValidIdentifier, IDENTIFIER_PATTERN } from "./identifier.js";
+
+/*
+ * ここから下は **2 つ目の基準**——「複製すると壊れる」ではなく
+ * **「複数のパッケージが要るが、どれにも属さない」**もの。
+ *
+ * - `east-asian-width` … `@as400web/tn5250` の `screen/`（桁を数える）と
+ *   `@as400web/scs` の `spool-html`（描く）の**両方**が使う。どちらかに置くと他方が依存する
+ * - `csv-parse` / `split-statements` … 取り込みと SQL 入力の下ごしらえ。
+ *   `@as400web/server` と `@as400web/web-ui` が使い、TN5250 でもホストサーバーでもない
+ *
+ * **物置にしないための歯止め**: **片方しか使わないものは、使う側に置く。**
+ * ここへ足す前に「本当に 2 つ以上のパッケージが要るか」を確かめること
+ * （`20260801-library-extraction-tn5250` decisions.md D2）。
+ */
+
+/** 全角判定（East Asian Width）。桁を数える側と描く側で表を分けない */
+export { isFullWidth, isCertainWideGlyph } from "./east-asian-width.js";
+/** CSV 解析（取り込みの入口。web-ui と MCP が同じ実装を使う） */
+export { parseCsv, type CsvParseResult } from "./csv-parse.js";
+/** SQL の複数文分割。純テキスト処理なので UI から直接使う（表も I/O も引き込まない） */
+export { splitSqlStatements, summarizeSql, type SqlStatement } from "./split-statements.js";

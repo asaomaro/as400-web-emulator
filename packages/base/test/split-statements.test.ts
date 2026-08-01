@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { splitSqlStatements, summarizeSql } from "../src/sql/split-statements.js";
+import { splitSqlStatements, summarizeSql } from "../src/split-statements.js";
 
 /**
  * `;` の分割。**「区切りに見えるが区切りでないもの」を外すのが本体**なので、

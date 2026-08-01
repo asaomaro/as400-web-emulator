@@ -18,21 +18,6 @@
  * ブラウザ向けパッケージが Node 専用パッケージを参照していても実体は届かない。
  * `test/hostserver-not-reexported.test.ts` が「`src` に hostserver 参照 0 件」で固定している。
  */
-/** 全角判定（East Asian Width）。桁を数える側と描く側で表を分けないため core に置く */
-export { isFullWidth, isCertainWideGlyph } from "./text/east-asian-width.js";
-/**
- * スプール（帳票）→ 自己完結 HTML。**ブラウザからも使う**——別ウィンドウへ書き出して
- * 印刷する経路（`PrinterPane`）が、同じ絵を手で書き直さずに済むように。
- * 表も I/O も引き込まない純関数。
- */
-export { renderSpoolHtml, type SpoolHtmlMeta } from "./html/spool-html.js";
-export { parseCsv, type CsvParseResult } from "./csv-parse.js";
-/** SQL の複数文分割。純テキスト処理なので UI から直接使う（表も I/O も引き込まない） */
-export {
-  splitSqlStatements,
-  summarizeSql,
-  type SqlStatement
-} from "./sql/split-statements.js";
 export {
   assertIdentifier,
   isValidIdentifier,
@@ -87,4 +72,4 @@ export {
   renderScreenHistoryHtml,
   type ScreenHtmlMeta,
   type ScreenHistoryEntry
-} from "./html/screen-html.js";
+} from "./screen-html.js";

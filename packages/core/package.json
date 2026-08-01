@@ -12,10 +12,6 @@
     "./browser": {
       "types": "./dist/browser.d.ts",
       "default": "./dist/browser.js"
-    },
-    "./codec": {
-      "types": "./dist/codec/codec.d.ts",
-      "default": "./dist/codec/codec.js"
     }
   },
   "files": [

@@ -34,8 +34,8 @@ import type {
   GuiWindow,
   ScreenColor,
   ScreenSnapshot
-} from "../screen/types.js";
-import { GRID_COLOR, GRID_LINE_STYLE } from "../protocol/wdsf-parser.js";
+} from "./screen/types.js";
+import { GRID_COLOR, GRID_LINE_STYLE } from "./protocol/wdsf-parser.js";
 
 /** コーデックが「この表にマップの無いバイト」を返すときの文字（`buffer.ts` と同じ） */
 const UNDISPLAYABLE = "�";

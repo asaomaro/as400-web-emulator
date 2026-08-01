@@ -23,7 +23,7 @@ import { TelnetLayer } from "../telnet/telnet.js";
 import { parseStartupResponse, type StartupResponse } from "../telnet/startup-record.js";
 import { TcpTransport } from "../transport/tcp.js";
 import type { Transport } from "../transport/types.js";
-import { Emitter } from "../util/emitter.js";
+import { Emitter } from "./emitter.js";
 import { aidCodeOf, aidKeyForCode, type AidKey } from "./aid-keys.js";
 import { terminalTypeFor, deviceEnvFor } from "./terminal-type.js";
 

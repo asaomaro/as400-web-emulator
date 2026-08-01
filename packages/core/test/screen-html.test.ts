@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { renderScreenHtml, renderScreenHistoryHtml } from "../src/html/screen-html.js";
+import { renderScreenHtml, renderScreenHistoryHtml } from "../src/screen-html.js";
 import type { Cell, ScreenSnapshot, Field } from "../src/screen/types.js";
 
 /**

@@ -20,10 +20,8 @@ import {
   canDecodeCcsid,
   canEncodeCcsid,
   TEXT_CCSIDS,
-  ccsidLabel,
-  ScsDecoder
+  ccsidLabel
 } from "../src/index.js";
-import { codecForCcsid as codecFromSubpath, katakanaChar as katakanaFromSubpath } from "../src/codec/codec.js";
 import { TEXT_CCSIDS as catalogCcsids, ccsidLabel as catalogLabel } from "../src/browser.js";
 
 /**
@@ -76,43 +74,14 @@ describe("codec / SCS の再輸出（@as400web/core 経由の後方互換）", (
     expect(pureDbcsCodecForCcsid(300)).toBeInstanceOf(PureDbcsCodec);
   });
 
-  it("root から ScsDecoder が取れて論理ページを返す", () => {
-    expect(ScsDecoder).toBeTypeOf("function");
-    // 'AB' + NL(0x15) + 'C' を 1 ページに展開する
-    const pages = new ScsDecoder(37).decode(Uint8Array.of(0xc1, 0xc2, 0x15, 0xc3));
-    expect(pages).toHaveLength(1);
-    expect(pages[0]!.lines).toEqual(["AB", "C"]);
-  });
 
-  it("`/codec` サブパスが server の host-dtaq.ts と同じ使い方で動く", () => {
-    expect(codecFromSubpath).toBe(codecForCcsid);
-    expect(codecFromSubpath(37).encode("AB").bytes).toEqual(Uint8Array.of(0xc1, 0xc2));
-    expect(codecFromSubpath(37).decode(Uint8Array.of(0xc1, 0xc2))).toBe("AB");
-  });
 
-  it("`/codec` サブパスから katakanaChar が取れる（後方互換。現在の利用側は無い）", () => {
-    // web-ui は `@as400web/core/browser` 経由に移した（表を引き込まないため。
-    // `20260726-ccsid-table-bundling`）。この経路は外部利用者のために残している。
-    expect(katakanaFromSubpath).toBe(katakanaChar);
-    // 0x81 は 37 では 'a'、930 の SBCS 部（カタカナ）では別字に化ける
-    expect(katakanaFromSubpath(0x81)).not.toBe("a");
-    expect(katakanaFromSubpath(0x40)).toBe(" ");
-  });
 
   it("`/browser` サブパスから CCSID の一覧が取れる（web-ui の IfsPane.vue が使う）", () => {
     expect(catalogCcsids).toBe(TEXT_CCSIDS);
     expect(catalogLabel(1208)).toContain("UTF-8");
   });
 
-  it("ファサードはバレルではなく `@as400web/ebcdic/codec`（狭い入口）を参照する", () => {
-    // バレル（`@as400web/ebcdic`）に向けると pure-dbcs / ccsid-text まで module graph に
-    // 入り、web-ui の本番バンドルが 628 バイト増える（実測。decisions.md D2）。
-    // **ビルドもテストも通ってしまう**種類の劣化なので、参照先そのものを固定する。
-    const here = dirname(fileURLToPath(import.meta.url));
-    const facade = readFileSync(join(here, "..", "src", "codec", "codec.ts"), "utf8");
-    expect(facade).toContain('from "@as400web/ebcdic/codec"');
-    expect(facade).not.toMatch(/from "@as400web\/ebcdic"/);
-  });
 
   it("package.json の exports が `/codec` を再輸出ファサードに向けている", () => {
     // 上のテストは相対 import なので、`exports` マップを書き換えても気づけない。
@@ -122,9 +91,7 @@ describe("codec / SCS の再輸出（@as400web/core 経由の後方互換）", (
       exports: Record<string, { types: string; default: string }>;
       dependencies: Record<string, string>;
     };
-    expect(pkg.exports["./codec"]!.default).toBe("./dist/codec/codec.js");
     expect(pkg.exports["./browser"]!.default).toBe("./dist/browser.js");
     expect(pkg.dependencies["@as400web/ebcdic"]).toBeDefined();
-    expect(pkg.dependencies["@as400web/scs"]).toBeDefined();
   });
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { renderSpoolHtml } from "../src/html/spool-html.js";
-import type { LogicalPage } from "@as400web/scs";
+import { renderSpoolHtml } from "../src/spool-html.js";
+import type { LogicalPage } from "../src/scs.js";
 
 /**
  * スプール（帳票）→ 自己完結 HTML。`renderSpoolPdf` の HTML 版。

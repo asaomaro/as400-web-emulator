@@ -12,7 +12,8 @@ import { screenToText, screenToAnsi, attributeRuns, type FormatOptions, type Scr
 import { renderSpoolPdf } from "./pdf.js";
 import type { PrinterOutputConfig } from "./printer-output.js";
 import { fieldSignon } from "./signon.js";
-import { renderScreenHtml, renderScreenHistoryHtml, renderSpoolHtml } from "@as400web/core";
+import { renderSpoolHtml } from "@as400web/scs";
+import { renderScreenHtml, renderScreenHistoryHtml } from "@as400web/core";
 import { ScreenRecorder } from "./screen-recorder.js";
 import { withAudit } from "./audit.js";
 
