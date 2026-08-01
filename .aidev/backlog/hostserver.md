@@ -341,7 +341,7 @@ spec に含むが今回は実装しなかったもの。各 work の decisions �
 - [x] **`unavailable` に `"failed"` を足す**
   - 取りに行って失敗した場合に `"not-requested"`（要求していない）と表示され、
     **嘘に近い**。型を 1 つ足すだけだが server / web-ui / CSV に波及する
-    → `20260801-sql-lob-failed-state` で消化。
+    → `20260801-sql-lob-failed-state`（PR #240）で消化。
       `packages/hostserver/src/db/db-decode.ts:50` の union に `"failed"` を足し、
       `query.ts:471` の catch がそれを入れる（`{ ...value }` でロケーターと `maxSize` は残す）。
       表示は `SqlResultTable.vue:83,95`（`(LOB: 取得失敗)` ＋「ログに理由が出ます」）と
