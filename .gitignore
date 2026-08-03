@@ -38,3 +38,6 @@ electron/app-stage/
 asaolib-screens/
 *-screens/
 spool-html/
+
+# Rust のビルド成果物
+/crates/**/target/
