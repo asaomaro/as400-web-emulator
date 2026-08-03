@@ -185,12 +185,60 @@ try {
     })
   );
 
+  // ---- 4.5 **MCP も同じ経路を通る** ----
+  // MCP の `send_key` も `entry.session.sendAid` を呼ぶだけ——ブラウザは同じ
+  // `screen` イベントを購読しているので、**専用の仕掛け無しにその場で描き直る**はず。
+  // 予約中は MCP も締め出される（holder を渡さない＝人間と同じ扱い）ことも見る。
+  const mcp = async (name, args) => {
+    const res = await fetch(`http://127.0.0.1:${PORT}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name, arguments: args }
+      })
+    });
+    const body = await res.text();
+    // Streamable HTTP は SSE で返ることがある（`data: {...}`）
+    const line = body.split("\n").find((l) => l.startsWith("data:")) ?? body;
+    return JSON.parse(line.replace(/^data:\s*/u, ""));
+  };
+
+  const listed = await mcp("list_sessions", {});
+  const listedText = JSON.stringify(listed);
+  check("**MCP がブラウザの開いたセッションを見つけられる**", listedText.includes(sessions.list()[0].id));
+
+  // 予約したまま MCP から打つ → **断られる**
+  const blockedByMcp = await mcp("send_key", { sessionId: sessions.list()[0].id, key: "Enter" });
+  check(
+    "**予約中は MCP も締め出される**（HLLAPI と人間だけの話ではない）",
+    JSON.stringify(blockedByMcp).includes("SESSION_RESERVED"),
+    JSON.stringify(blockedByMcp).slice(0, 90)
+  );
+
   // ---- 5. 解除の口 ----
   await page.locator(".reserved-box button").click();
   await page.waitForSelector(".reserved-overlay", { state: "detached", timeout: 10_000 }).catch(() => {});
   await page.screenshot({ path: `${SHOTS}/4-released.png` });
   check("**「解除して操作する」で覆いが消える**", (await page.locator(".reserved-overlay").count()) === 0);
   check("解除がサーバーにも効いている", sessions.reservationOf(sessions.list()[0]?.id ?? "") === undefined);
+
+  // ---- 6. **MCP の操作もブラウザに映る** ----
+  const beforeMcp = await screenText();
+  const viaMcp = await mcp("send_key", { sessionId: sessions.list()[0].id, key: "Enter" });
+  check("解除後は MCP から打てる", !JSON.stringify(viaMcp).includes("SESSION_RESERVED"));
+  await page
+    .waitForFunction((prev) => document.querySelector(".screen-wrap")?.innerText !== prev, beforeMcp, {
+      timeout: 20_000
+    })
+    .catch(() => {});
+  await page.screenshot({ path: `${SHOTS}/5-after-mcp-key.png` });
+  check(
+    "**MCP の操作もブラウザにその場で映る**（DLL と同じ経路——専用の仕掛けは無い）",
+    (await screenText()) !== beforeMcp
+  );
 
   sessions.closeAll?.();
 } catch (e) {
