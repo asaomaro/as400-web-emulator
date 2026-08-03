@@ -16,6 +16,7 @@
  * 3. 実機セッションを開いてから: Connect → Copy PS → Search → Send Key → Disconnect
  * 4. **未実装の機能番号が `rc=10`**
  * 5. **日本語（DBCS）を含む画面**が壊れずに読める
+ * 6. **予約（`Reserve`）が人間の入力を実際に締め出す**
  */
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -211,9 +212,36 @@ try {
   const mixed = await hllapi(3, "@E@x");
   check("**混ざっていたら何も送らない（rc=20）**", mixed.rc === 20, `rc=${mixed.rc}`);
 
+  // ---- 9.7 予約（Reserve / Release）----
+  // **締め出しが本当に効くかを、締め出される側から見る。** `rc=0` が返るだけでは
+  // 「予約したつもり」で終わる。人間の経路（`assertKeyAllowed`）が断ることまで確かめる。
+  const humanBlocked = () => {
+    try {
+      sessions.assertKeyAllowed(opened.id, "Enter");
+      return false;
+    } catch (e) {
+      return String(e).includes("reserved");
+    }
+  };
+  check("予約前は人間が打てる（対照）", !humanBlocked());
+  const res = await hllapi(11, "", 8);
+  check("Reserve (11)", res.rc === 0, `rc=${res.rc}`);
+  check("**予約中は人間の入力が断られる**", humanBlocked());
+  // 予約の持ち主（HLLAPI 自身）は通る
+  const whileReserved = await hllapi(5, "", cells);
+  check("**予約中も自動化自身は読める**", whileReserved.rc === 0, `rc=${whileReserved.rc}`);
+  const rel = await hllapi(12, "", 8);
+  check("Release (12)", rel.rc === 0, `rc=${rel.rc}`);
+  check("**解除で人間が打てるようになる**", !humanBlocked());
+
+  // **Disconnect でも外れる**（正常終了したのに締め切ったままにしない）
+  await hllapi(11, "", 8);
+  check("再度 Reserve できる", humanBlocked());
+
   // ---- 10. Disconnect ----
   const dis = await hllapi(2, "A", 1);
   check("Disconnect (2)", dis.rc === 0, `rc=${dis.rc}`);
+  check("**Disconnect で予約も外れる**（締め切ったままにしない）", !humanBlocked());
   const after = await hllapi(5, "", 100);
   check("**切断後の操作は rc=8**（呼ぶ順序が違う）", after.rc === 8, `rc=${after.rc}`);
 
