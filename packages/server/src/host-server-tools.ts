@@ -865,15 +865,22 @@ export function registerHostServerTools(server: McpServer, deps: ToolDeps): void
         /** ノードごとの属性まで返す。既定は返さない（トークン量を抑える） */
         detail: z.boolean().optional()
       },
+      // **返す欄をすべて宣言する。** MCP SDK は structuredContent を outputSchema で
+      // **厳密に検証**し、宣言されていない欄が 1 つでもあると
+      // `Structured content does not match the tool's output schema` で呼び出しごと落ちる。
+      // `captured` / `at` / `job` / `warnings` の宣言漏れで実際に落ちた（実機の MCP 検証で判明）。
       outputSchema: {
         statement: z.string(),
         captured: z.string(),
+        at: z.string(),
+        job: z.string().optional(),
         summary: z.record(z.string(), z.unknown()),
         nodes: z.array(z.record(z.string(), z.unknown())),
         nodeCount: z.number(),
         truncated: z.boolean(),
         advice: z.array(z.record(z.string(), z.unknown())),
-        unknownRecordTypes: z.array(z.number())
+        unknownRecordTypes: z.array(z.number()),
+        warnings: z.array(z.string()).optional()
       }
     },
     async (input) =>
