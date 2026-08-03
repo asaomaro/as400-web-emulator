@@ -1,7 +1,7 @@
 schema: 3
 slug: sql-visual-explain
-current: coding
-approved: [requirement, research, spec, design, plan]
+current: review
+approved: [requirement, research, spec, design, plan, coding, test, review]
 mode: autonomous
 humanGates: []
 maxSendBacks: 3
