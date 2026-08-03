@@ -306,6 +306,16 @@ function connect(
 
   // **開いているセッションを古い順に `A` から割り当てる**（対応表はここが持つ）
   const open = deps.sessions.list(user).sort((a, b) => a.connectedAt.localeCompare(b.connectedAt));
+  // **指定を書かないときは自分のセッションだけを見る。**
+  //
+  // `SessionManager.list` は **admin には全件返す**（`ownedOnly` が admin を素通し）。
+  // そのままだと管理者の `Connect("A")` が「サーバー上で最も古いセッション」——
+  // 十中八九**他人の画面**——を黙って掴む。支援のために他人を触るのは正当な用途だが、
+  // **既定であってはならない**。名指しすれば届くので、越権は明示的な操作に閉じる。
+  //
+  // 認証オフでは `user` も `owner` も `undefined` で一致するため、何も変わらない。
+  // 一般利用者は `list` の時点で自分の分しか来ないので、これも変わらない。
+  const mine = open.filter((e) => e.owner === user?.username);
   const taken = new Set([...conns.values()].map((c) => c.sessionId));
 
   let target: SessionEntry | undefined;
@@ -321,8 +331,8 @@ function connect(
     for (const [k, v] of [...conns]) if (v.sessionId === target!.id && k !== name) conns.delete(k);
   } else {
     const slot = name.charCodeAt(0) - 65;
-    const free = open.filter((e) => !taken.has(e.id));
-    target = open[slot] && !taken.has(open[slot]!.id) ? open[slot] : free[0];
+    const free = mine.filter((e) => !taken.has(e.id));
+    target = mine[slot] && !taken.has(mine[slot]!.id) ? mine[slot] : free[0];
   }
   if (!target) return { rc: HRC.PS_ID_INVALID };
 

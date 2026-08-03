@@ -649,14 +649,20 @@ describe("監査", () => {
 
   it("**他人のセッションを触ったことが読み取れる**（管理者の遠隔操作）", async () => {
     const { deps } = fakeDeps({
-      sessions: [{ id: "s1", connectedAt: "2026-08-03T00:00:00Z", owner: "tanaka" }]
+      sessions: [
+        { id: "s1", connectedAt: "2026-08-03T00:00:00Z", owner: "tanaka", target: { name: "田中の画面" } }
+      ]
     });
     const admin = { username: "kanri", role: "admin" } as AuthUser;
+    // **名指しでなければ届かない**（既定は自分のセッションだけ）。
+    // 越権は明示的な操作なので、監査に残す価値もそこにある
     const events = await collect(async () => {
-      await callHllapi(deps, { function: HF.CONNECT_PS, dataB64: b64("A"), length: 1, pos: 0 }, admin);
+      const spec = "A 田中の画面";
+      await callHllapi(deps, { function: HF.CONNECT_PS, dataB64: b64(spec), length: spec.length, pos: 0 }, admin);
       await callHllapi(deps, { function: HF.SEND_KEY, dataB64: b64("@E"), length: 2, pos: 0 }, admin);
     });
     // **所有者が載る**——自分以外のセッションを動かしたことが監査から分かる
+    expect(events).toHaveLength(2);
     expect(events.every((e) => e.key === "owner=tanaka")).toBe(true);
   });
 
@@ -675,5 +681,65 @@ describe("監査", () => {
     const { deps } = await connected();
     const events = await collect(() => call(deps, HF.SEND_KEY, { data: "HIMITSU@E" }));
     expect(JSON.stringify(events)).not.toContain("HIMITSU");
+  });
+});
+
+/**
+ * **指定なしの `Connect` は自分のセッションだけを見る。**
+ *
+ * `SessionManager.list` は admin には全件返す（`ownedOnly` が admin を素通し）。
+ * そのままだと管理者の `Connect("A")` が「サーバー上で最も古いセッション」——
+ * 十中八九**他人の画面**——を黙って掴む。
+ *
+ * 支援のために他人を触るのは正当な用途なので**塞がない**が、**既定にはしない**。
+ * 名指しすれば届く＝越権は明示的な操作に閉じる。
+ */
+describe("既定は自分のセッションに限る（管理者の誤操作を防ぐ）", () => {
+  const admin = { username: "kanri", role: "admin" } as AuthUser;
+  const conn = (deps: HllapiDeps, data: string, u?: AuthUser) =>
+    callHllapi(deps, { function: HF.CONNECT_PS, dataB64: b64(data), length: data.length, pos: 0 }, u);
+  const bound = async (deps: HllapiDeps, u?: AuthUser) =>
+    text(
+      await callHllapi(deps, { function: HF.QUERY_SESSIONS, dataB64: "", length: 256, pos: 0 }, u)
+    ).trim();
+
+  /** 他人のセッションのほうが古い＝従来なら管理者の "A" がこれを掴んでいた */
+  const mixed = {
+    sessions: [
+      { id: "hito-no", connectedAt: "2026-08-03T00:00:00Z", owner: "tanaka", target: { name: "田中の画面" } },
+      { id: "jibun-no", connectedAt: "2026-08-03T01:00:00Z", owner: "kanri", target: { name: "自分の画面" } }
+    ]
+  };
+
+  it("**管理者の `Connect(\"A\")` は他人の画面を掴まない**（自分のほうへ行く）", async () => {
+    const { deps } = fakeDeps(mixed);
+    expect((await conn(deps, "A", admin)).rc).toBe(HRC.SUCCESSFUL);
+    expect(await bound(deps, admin)).toContain("自分の画面");
+  });
+
+  it("**自分のセッションが無ければ rc=1**（他人へは寄せない）", async () => {
+    const { deps } = fakeDeps({
+      sessions: [{ id: "hito-no", connectedAt: "2026-08-03T00:00:00Z", owner: "tanaka" }]
+    });
+    expect((await conn(deps, "A", admin)).rc).toBe(HRC.PS_ID_INVALID);
+  });
+
+  it("**名指しなら他人へ届く**（支援は塞がない。越権は明示的な操作に閉じる）", async () => {
+    const { deps } = fakeDeps(mixed);
+    expect((await conn(deps, "A 田中の画面", admin)).rc).toBe(HRC.SUCCESSFUL);
+    expect(await bound(deps, admin)).toContain("田中の画面");
+  });
+
+  it("一般の利用者は影響を受けない（`list` の時点で自分の分しか来ない）", async () => {
+    const { deps } = fakeDeps({
+      sessions: [{ id: "jibun-no", connectedAt: "2026-08-03T00:00:00Z", owner: "tanaka" }]
+    });
+    const user = { username: "tanaka", role: "user" } as AuthUser;
+    expect((await conn(deps, "A", user)).rc).toBe(HRC.SUCCESSFUL);
+  });
+
+  it("認証オフも影響を受けない（`user` も `owner` も undefined で一致する）", async () => {
+    const { deps } = fakeDeps({ sessions: [{ id: "only", connectedAt: "2026-08-03T00:00:00Z" }] });
+    expect((await conn(deps, "A")).rc).toBe(HRC.SUCCESSFUL);
   });
 });
