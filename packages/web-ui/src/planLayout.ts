@@ -73,8 +73,11 @@ export function layoutPlan(blocks: PlanBlock[], maxNodes = MAX_NODES): PlanLayou
   let maxRows = 0;
 
   for (const block of blocks) {
-    const shown = budget > 0 ? block.nodes.slice(0, budget) : [];
-    hidden += block.nodes.length - shown.length;
+    // **図に出すのは計画のステップだけ。** `3006`（アクセスプランの再作成）や
+    // `3014`（クエリ情報）はほぼ全文で出るので、同じ列に並べると図が付帯情報で埋まる
+    const steps = block.nodes.filter((n) => n.category === "step");
+    const shown = budget > 0 ? steps.slice(0, budget) : [];
+    hidden += steps.length - shown.length;
     budget -= shown.length;
     // **空になったブロックも列として残す**——「このブロックは畳まれた」と分かるように
     const nodes: LaidOutNode[] = shown.map((node, i) => ({
@@ -117,7 +120,33 @@ export function connectorsOf(block: LaidOutBlock): Connector[] {
   return out;
 }
 
-/** ノードの色分けに使う種別名（CSS のクラス名にする。**生色を書かない**） */
+/**
+ * ノードの色分けに使うクラス名。
+ *
+ * **種別は 17 通りあるが、色は 4 系統に畳む**——17 色に塗り分けても読み手は覚えられないし、
+ * 生色が増える（`docs/UI-DESIGN.md`「配色は CSS 変数で一元化し、生色を避ける」）。
+ * 種別そのものはノードのラベルと属性で分かる。
+ */
 export function nodeClassOf(node: PlanNode): string {
-  return `pn-${node.kind}`;
+  switch (node.kind) {
+    case "table-scan":
+    case "index-used":
+    case "index-created":
+      return "pn-access";
+    case "sort":
+    case "temp-table":
+    case "temp-hash-table":
+    case "bitmap-created":
+    case "distinct":
+    case "set-operation":
+    case "grouping":
+    case "subquery":
+      return "pn-operation";
+    case "index-advised":
+      return "pn-advice";
+    case "other":
+      return "pn-other";
+    default:
+      return "pn-info";
+  }
 }

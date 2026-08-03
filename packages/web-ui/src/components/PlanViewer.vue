@@ -48,6 +48,11 @@ watch(
 );
 
 const allNodes = computed(() => props.plan.blocks.flatMap((b) => b.nodes));
+/**
+ * **付帯情報は図に出さない。** `3006`（アクセスプランの再作成）や `3014`（クエリ情報）は
+ * ほぼ全文で出るので、計画のステップと同じ列に並べると図が埋まる。脇にまとめる。
+ */
+const infoNodes = computed(() => allNodes.value.filter((n) => n.category === "info"));
 const diff = computed(() => (props.compareWith ? diffPlans(props.plan, props.compareWith) : undefined));
 
 function select(node: PlanNode): void {
@@ -82,7 +87,8 @@ async function createIndex(advice: IndexAdvice): Promise<void> {
         </button>
       </div>
       <dl class="pv-summary">
-        <div><dt>ノード</dt><dd>{{ plan.summary.nodeCount }}</dd></div>
+        <div><dt>ステップ</dt><dd>{{ plan.summary.stepCount }}</dd></div>
+        <div><dt>ノード計</dt><dd>{{ plan.summary.nodeCount }}</dd></div>
         <div><dt>ブロック</dt><dd>{{ plan.summary.blockCount }}</dd></div>
         <div><dt>表</dt><dd>{{ plan.summary.tables.join(", ") || "-" }}</dd></div>
         <div><dt>索引</dt><dd>{{ plan.summary.indexes.join(", ") || "-" }}</dd></div>
@@ -121,7 +127,7 @@ async function createIndex(advice: IndexAdvice): Promise<void> {
           <li v-for="block in plan.blocks" :key="block.number">
             <span class="pv-block">クエリブロック {{ block.number }}</span>
             <ul>
-              <li v-for="node in block.nodes" :key="node.id">
+              <li v-for="node in block.nodes.filter((n) => n.category === 'step')" :key="node.id">
                 <button
                   type="button"
                   class="pv-tree-node"
@@ -148,6 +154,17 @@ async function createIndex(advice: IndexAdvice): Promise<void> {
               <dd>{{ a.value }}</dd>
             </div>
           </dl>
+        </section>
+
+        <section v-if="infoNodes.length > 0">
+          <h3>付帯情報（{{ infoNodes.length }} 件）</h3>
+          <ul class="pv-info-list">
+            <li v-for="n in infoNodes" :key="n.id">
+              <button type="button" class="pv-info-item" :class="{ on: n.id === selected?.id }" @click="select(n)">
+                {{ n.label }}
+              </button>
+            </li>
+          </ul>
         </section>
 
         <section v-if="plan.advice.length > 0">
@@ -303,11 +320,40 @@ async function createIndex(advice: IndexAdvice): Promise<void> {
   color: var(--muted);
   margin-left: 8px;
 }
-.pn-access-method {
+.pn-access {
   border-left: 3px solid var(--sys-1);
+}
+.pn-operation {
+  border-left: 3px solid var(--sys-3);
 }
 .pn-advice {
   border-left: 3px solid var(--sys-6);
+}
+.pn-info {
+  border-left: 3px solid var(--sys-8);
+}
+.pv-info-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.pv-info-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 6px;
+  margin: 2px 0;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+}
+.pv-info-item.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--ink);
 }
 .pv-advice {
   list-style: none;

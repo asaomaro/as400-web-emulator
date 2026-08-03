@@ -120,12 +120,18 @@ svg {
   fill: var(--accent-soft);
 }
 /* 種別は枠線で分ける（塗り分けると選択状態が読めなくなる） */
-.pn-access-method rect {
+.pn-access rect {
   stroke: var(--sys-1);
+}
+.pn-operation rect {
+  stroke: var(--sys-3);
 }
 .pn-advice rect {
   stroke: var(--sys-6);
   stroke-dasharray: 4 3;
+}
+.pn-info rect {
+  stroke: var(--sys-8);
 }
 .pn-other rect {
   stroke: var(--line);

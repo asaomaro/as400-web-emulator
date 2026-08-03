@@ -22,7 +22,8 @@ import type { PlanNode, QueryPlan } from "../src/planApi.js";
  */
 const node = (over: Partial<PlanNode> = {}): PlanNode => ({
   id: "1-0",
-  kind: "table-access",
+  kind: "table-scan",
+  category: "step",
   recordType: 3000,
   label: "表アクセス: T",
   attributes: [],
@@ -36,7 +37,7 @@ function plan(over: Partial<QueryPlan> = {}): QueryPlan {
     at: "2026-08-02T00:00:00Z",
     blocks: [{ number: 1, nodes: [node()] }],
     advice: [],
-    summary: { nodeCount: 1, blockCount: 1, tables: ["S.T"], indexes: [], adviceCount: 0 },
+    summary: { nodeCount: 1, stepCount: 1, blockCount: 1, tables: ["S.T"], indexes: [], adviceCount: 0 },
     unknownRecordTypes: [],
     ...over
   };
@@ -136,8 +137,8 @@ describe("JSON の入出力", () => {
 
 describe("比較", () => {
   it("要約の差を出し、変わった項目に印を付ける", () => {
-    const a = plan({ summary: { nodeCount: 3, blockCount: 1, tables: ["S.T"], indexes: [], adviceCount: 1 } });
-    const b = plan({ summary: { nodeCount: 3, blockCount: 1, tables: ["S.T"], indexes: ["IX"], adviceCount: 0 } });
+    const a = plan({ summary: { nodeCount: 3, stepCount: 3, blockCount: 1, tables: ["S.T"], indexes: [], adviceCount: 1 } });
+    const b = plan({ summary: { nodeCount: 3, stepCount: 3, blockCount: 1, tables: ["S.T"], indexes: ["IX"], adviceCount: 0 } });
     const d = diffPlans(a, b);
 
     expect(d.summary.find((r) => r.label === "ノード数")?.changed).toBe(false);
@@ -155,7 +156,7 @@ describe("比較", () => {
         {
           number: 1,
           nodes: [
-            node({ id: "1-0", kind: "other", recordType: 3006, label: "記録 3006" }),
+            node({ id: "1-0", kind: "other", category: "info", recordType: 3006, label: "記録 3006" }),
             node({ id: "1-1", table: { schema: "S", name: "T" }, estimatedRows: 100 })
           ]
         }

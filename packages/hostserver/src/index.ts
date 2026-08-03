@@ -49,6 +49,7 @@ export {
   type PlanBlock,
   type PlanNode,
   type PlanNodeKind,
+  type PlanNodeCategory,
   type PlanAttribute,
   type PlanSummary,
   type PlanCapture,

@@ -21,7 +21,7 @@ function plan(statement = "SELECT 1"): QueryPlan {
     at: "2026-08-02T00:00:00Z",
     blocks: [{ number: 1, nodes: [] }],
     advice: [],
-    summary: { nodeCount: 0, blockCount: 1, tables: [], indexes: [], adviceCount: 0 },
+    summary: { nodeCount: 0, stepCount: 0, blockCount: 1, tables: [], indexes: [], adviceCount: 0 },
     unknownRecordTypes: []
   };
 }

@@ -23,21 +23,77 @@
  *
  * ## 知らない記録種別に名前を付けない
  *
- * 名前付きノードにするのは**中身を実測した種別だけ**（`3000` / `3001` / `3020`）。
- * それ以外は `other` として、値の入っていた列をそのまま属性に載せる（`design.md` 判断 A2）。
+ * 名前を与えるのは、**IBM の文書化された名称とこちらの実測が一致した種別だけ**
+ * （`PlanNodeKind` の表を参照）。それ以外は `other` として、値の入っていた列を
+ * そのまま属性に載せる（`design.md` 判断 A2）。
  * 出所の無いラベルは、そのまま利用者の判断材料になってしまう。
  */
 
-/** 計画ノードの種別。**実測で中身を確かめた種別だけが名前を持つ** */
+/**
+ * 計画ノードの種別。
+ *
+ * **名前を与えるのは、IBM の文書化された名称と、こちらの実測が一致したものだけ。**
+ * 出所は IBM Documentation の "Database monitor view NNNN - …"。
+ * 実測は `scripts/research-visual-explain-records.mjs`（形の違う SQL を 9 通り流し、
+ * 種別ごとに「どの形で出たか」と「どの列が埋まったか」を採った）。
+ *
+ * | QQRID | IBM の名称 | 実測での裏付け |
+ * |---|---|---|
+ * | 1000 | SQL Information | 文テキスト・文番号・サーバー名・所要時間 |
+ * | 3000 | Table Scan | 表ごとに 1 件・`QVQTBL` に対象表 |
+ * | 3001 | Index Used | `QVINAM` に索引名（`QADBILLB`）・索引を使う文でだけ出た |
+ * | 3002 | Index Created | （未観測。文書のみ） |
+ * | 3003 | Query Sort | `GROUP BY` / `ORDER BY` のときだけ出た |
+ * | 3004 | Temp Table | （未観測。文書のみ） |
+ * | 3006 | Access Plan Rebuilt | `QQC102=QAQQINI`・`QQRCOD=A0` |
+ * | 3007 | Optimizer Timed Out | 索引の多い `QSYS2.SYSCOLUMNS` でだけ出た |
+ * | 3008 | Subquery Processing | （未観測。文書のみ） |
+ * | 3010 | Host Variable & ODP Implementation | `QQ1000` にリテラル値（`100` / `'QSYS2'`） |
+ * | 3014 | Generic QQ Information | 全文で 1 件 |
+ * | 3015 | Statistics Information | **7.5 でだけ出た**（7.3 では出ない） |
+ * | 3019 | Rows Retrieved | 全文で 1 件（`QQQDTL=0`。ノードにせず要約へ） |
+ * | 3020 | Index advised (SQE) | `QQIDXA='Y'` と助言キー列 `QQIDXD` |
+ * | 3021 | Bitmap Created | 索引評価が走った文でだけ出た |
+ * | 3023 | Temp Hash Table Created | 結合・集約・UNION・副問合せで出た |
+ * | 3025 | Distinct Processing | **`DISTINCT` のときだけ**出た |
+ * | 3026 | Set Operation | **`UNION` のときだけ**出た |
+ * | 3028 | Grouping | 集約を伴う文で出た |
+ *
+ * **`3018` / `5002` / `5005` は名前を与えない。** 観測はしたが（`3018` は版数・PTF 群・
+ * 利用者名を持ち、モニターの開始/終了で 1 件ずつ出る）、文書化された名称を確認できていない。
+ * 推測でラベルを付けると、そのまま利用者の判断材料になってしまう。
+ */
 export type PlanNodeKind =
-  /** `3000`: 表ごとのアクセス要約（対象表・総行数・推定行数・理由コード） */
-  | "table-access"
-  /** `3001`: アクセス方法（使った索引が入ることがある） */
-  | "access-method"
-  /** `3020`: 索引の助言（`QQIDXA='Y'` と助言キー列 `QQIDXD`） */
-  | "advice"
-  /** 上記以外。**中身を実測していないので名前を与えない** */
+  // --- 計画のステップ（図に出す） ---
+  | "table-scan"
+  | "index-used"
+  | "index-created"
+  | "sort"
+  | "temp-table"
+  | "temp-hash-table"
+  | "bitmap-created"
+  | "distinct"
+  | "set-operation"
+  | "grouping"
+  | "subquery"
+  // --- 付帯情報（図に出さず脇に出す） ---
+  | "index-advised"
+  | "host-variable"
+  | "generic-info"
+  | "statistics"
+  | "access-plan-rebuilt"
+  | "optimizer-timeout"
+  | "sql-information"
+  /** 名前を与えていない種別。**中身は属性で見せる** */
   | "other";
+
+/**
+ * ノードの位置づけ。**図に出すのは `step` だけ**。
+ *
+ * `3006`（Access Plan Rebuilt）や `3014`（Generic QQ Information）は**ほぼ全文で出る**ので、
+ * 計画のステップと同じ列に並べると図が付帯情報で埋まる。分けて脇に出す。
+ */
+export type PlanNodeCategory = "step" | "info";
 
 /** ノード詳細パネルに出す 1 項目 */
 export interface PlanAttribute {
@@ -49,6 +105,8 @@ export interface PlanNode {
   /** `${ブロック番号}-${ブロック内の連番}` */
   id: string;
   kind: PlanNodeKind;
+  /** 図に出すか（`step`）、脇に出すか（`info`） */
+  category: PlanNodeCategory;
   /** 元の記録種別（`QQRID`）。**未知でも必ず保持する** */
   recordType: number;
   /** ノードに出す短い表示名 */
@@ -86,6 +144,8 @@ export interface IndexAdvice {
 
 export interface PlanSummary {
   nodeCount: number;
+  /** 計画のステップの数（図に出るノード）。`nodeCount` は付帯情報も含む総数 */
+  stepCount: number;
   blockCount: number;
   /** 走査した表（`schema.name`・重複なし） */
   tables: string[];
@@ -183,8 +243,67 @@ export const MONITOR_COLUMNS = [
   "QQJOB"
 ] as const;
 
-/** 文レベルの要約であってノードではない記録種別（`QQQDTL=0` の `3019`） */
+/** 文レベルの要約であってノードではない記録種別（`QQQDTL=0` の `3019`。IBM: Rows Retrieved） */
 const STATEMENT_SUMMARY_RECORD = 3019;
+
+/**
+ * 記録種別 → ノード種別。**出所は上の表**（IBM の文書化された名称＋実測）。
+ * ここに無い種別は `other` として、値の入った列をそのまま見せる。
+ */
+const KIND_BY_RECORD = new Map<number, PlanNodeKind>([
+  [1000, "sql-information"],
+  [3000, "table-scan"],
+  [3001, "index-used"],
+  [3002, "index-created"],
+  [3003, "sort"],
+  [3004, "temp-table"],
+  [3006, "access-plan-rebuilt"],
+  [3007, "optimizer-timeout"],
+  [3008, "subquery"],
+  [3010, "host-variable"],
+  [3014, "generic-info"],
+  [3015, "statistics"],
+  [3020, "index-advised"],
+  [3021, "bitmap-created"],
+  [3023, "temp-hash-table"],
+  [3025, "distinct"],
+  [3026, "set-operation"],
+  [3028, "grouping"]
+]);
+
+/** 図に出さない（脇に出す）ノード種別 */
+const INFO_KINDS = new Set<PlanNodeKind>([
+  "sql-information",
+  "index-advised",
+  "host-variable",
+  "generic-info",
+  "statistics",
+  "access-plan-rebuilt",
+  "optimizer-timeout"
+]);
+
+/** 種別ごとの表示名。**IBM の名称を日本語にしたもの**（原語は上の表） */
+const LABEL_BY_KIND: Record<PlanNodeKind, string> = {
+  "table-scan": "表の走査",
+  "index-used": "索引の使用",
+  "index-created": "索引の作成",
+  sort: "並べ替え",
+  "temp-table": "一時表",
+  "temp-hash-table": "一時ハッシュ表の作成",
+  "bitmap-created": "ビットマップの作成",
+  distinct: "重複の除去",
+  "set-operation": "集合演算",
+  grouping: "グループ化",
+  subquery: "副問合せの処理",
+  "index-advised": "索引の助言",
+  "host-variable": "ホスト変数・ODP",
+  "generic-info": "クエリ情報",
+  statistics: "統計情報",
+  "access-plan-rebuilt": "アクセスプランの再作成",
+  "optimizer-timeout": "オプティマイザの打ち切り",
+  "sql-information": "SQL 文の情報",
+  other: ""
+};
 
 /**
  * **こちらが意図して使っている**ので「未対応」に数えない記録種別。
@@ -198,22 +317,16 @@ const STATEMENT_SUMMARY_RECORD = 3019;
  */
 const CONSUMED_RECORDS = new Set([1000, STATEMENT_SUMMARY_RECORD]);
 
-/** 実測で中身を確かめた記録種別 */
-const RECORD_TABLE_ACCESS = 3000;
-const RECORD_ACCESS_METHOD = 3001;
+/** 索引の助言を運ぶ記録（IBM: Index advised (SQE)） */
 const RECORD_INDEX_ADVICE = 3020;
 
 function kindOf(recordType: number): PlanNodeKind {
-  switch (recordType) {
-    case RECORD_TABLE_ACCESS:
-      return "table-access";
-    case RECORD_ACCESS_METHOD:
-      return "access-method";
-    case RECORD_INDEX_ADVICE:
-      return "advice";
-    default:
-      return "other";
-  }
+  return KIND_BY_RECORD.get(recordType) ?? "other";
+}
+
+function categoryOf(kind: PlanNodeKind): PlanNodeCategory {
+  // **未対応種別は `info` に寄せる**。図に出すと、意味の分からない箱が計画の流れに紛れる
+  return kind === "other" || INFO_KINDS.has(kind) ? "info" : "step";
 }
 
 function trimOrUndefined(v: string | null | undefined): string | undefined {
@@ -238,21 +351,17 @@ function indexOf(r: MonitorRecord): { schema?: string; name: string } | undefine
   return schema === undefined ? { name } : { schema, name };
 }
 
-/** ノードの表示名。**未知種別は種別番号をそのまま出す**（知ったかぶりをしない） */
+/**
+ * ノードの表示名。**名前を与えていない種別は種別番号をそのまま出す**（知ったかぶりをしない）。
+ * 対象（表・索引）が分かるときは添える——「表の走査」だけでは、どの表かが読めない。
+ */
 function labelOf(kind: PlanNodeKind, r: MonitorRecord): string {
-  const table = tableOf(r);
+  if (kind === "other") return `記録 ${r.QQRID}`;
+  const base = LABEL_BY_KIND[kind];
   const index = indexOf(r);
-  switch (kind) {
-    case "table-access":
-      return table ? `表アクセス: ${table.name}` : "表アクセス";
-    case "access-method":
-      if (index) return `索引使用: ${index.name}`;
-      return table ? `表全体の走査: ${table.name}` : "表全体の走査";
-    case "advice":
-      return table ? `索引の助言: ${table.name}` : "索引の助言";
-    default:
-      return `記録 ${r.QQRID}`;
-  }
+  if (kind === "index-used" && index) return `${base}: ${index.name}`;
+  const table = tableOf(r);
+  return table ? `${base}: ${table.name}` : base;
 }
 
 /** 値の入っていた列だけを属性にする。**未知種別ではここが情報の全て** */
@@ -345,6 +454,7 @@ export function buildQueryPlan(
     const node: PlanNode = {
       id: `${block}-${nodes.length}`,
       kind,
+      category: categoryOf(kind),
       recordType: r.QQRID,
       label: labelOf(kind, r),
       attributes: attributesOf(r)
@@ -391,6 +501,7 @@ export function buildQueryPlan(
 
   const summary: PlanSummary = {
     nodeCount: allNodes.length,
+    stepCount: allNodes.filter((n) => n.category === "step").length,
     blockCount: blocks.length,
     tables,
     indexes,

@@ -14,7 +14,8 @@ import type { IndexAdvice, PlanNode, QueryPlan } from "../src/planApi.js";
  */
 const node = (over: Partial<PlanNode> = {}): PlanNode => ({
   id: "1-0",
-  kind: "table-access",
+  kind: "table-scan",
+  category: "step",
   recordType: 3000,
   label: "表アクセス: SYSCOLUMNS",
   attributes: [{ label: "記録種別", value: "3000" }],
@@ -36,6 +37,7 @@ function plan(over: Partial<QueryPlan> = {}): QueryPlan {
     advice: [],
     summary: {
       nodeCount: 1,
+      stepCount: 1,
       blockCount: 1,
       tables: ["QSYS2.SYSCOLUMNS"],
       indexes: ["QADBILLB"],

@@ -18,7 +18,9 @@ import type { PlanBlock, PlanNode } from "../src/planApi.js";
  */
 const node = (id: string, over: Partial<PlanNode> = {}): PlanNode => ({
   id,
-  kind: "other",
+  kind: "table-scan",
+  // **図に出るのは step だけ**なので、レイアウトの検証には step を使う
+  category: "step",
   recordType: 3000,
   label: `node ${id}`,
   attributes: [],
@@ -111,9 +113,13 @@ describe("連結線", () => {
 
 describe("種別のクラス名", () => {
   it("種別ごとに別のクラスになる（**生色を書かず CSS 変数に寄せる**ため）", () => {
-    expect(nodeClassOf(node("a", { kind: "table-access" }))).toBe("pn-table-access");
-    expect(nodeClassOf(node("a", { kind: "access-method" }))).toBe("pn-access-method");
-    expect(nodeClassOf(node("a", { kind: "advice" }))).toBe("pn-advice");
+    // **17 種を 4 系統に畳む**（17 色に塗り分けても読み手が覚えられない）
+    expect(nodeClassOf(node("a", { kind: "table-scan" }))).toBe("pn-access");
+    expect(nodeClassOf(node("a", { kind: "index-used" }))).toBe("pn-access");
+    expect(nodeClassOf(node("a", { kind: "sort" }))).toBe("pn-operation");
+    expect(nodeClassOf(node("a", { kind: "set-operation" }))).toBe("pn-operation");
+    expect(nodeClassOf(node("a", { kind: "index-advised" }))).toBe("pn-advice");
+    expect(nodeClassOf(node("a", { kind: "statistics" }))).toBe("pn-info");
     expect(nodeClassOf(node("a", { kind: "other" }))).toBe("pn-other");
   });
 });

@@ -37,7 +37,7 @@ const rec = (over: Partial<MonitorRecord> & { QQRID: number }): MonitorRecord =>
 const META = { captured: "run" as const, at: "2026-08-02T00:00:00Z" };
 
 describe("記録種別の写像", () => {
-  it("3000 は表アクセス、3001 は索引使用（実測した 3 種だけが名前を持つ）", () => {
+  it("3000 は表の走査、3001 は索引の使用（IBM の文書化された名称に合わせる）", () => {
     const plan = buildQueryPlan(
       [
         rec({ QQRID: 3000, QVQLIB: "QSYS2", QVQTBL: "SYSCOLUMNS", QQTOTR: 669108, QQREST: 5681, QQRCOD: "T3" }),
@@ -46,44 +46,81 @@ describe("記録種別の写像", () => {
       META
     );
     const nodes = plan.blocks[0]?.nodes ?? [];
-    expect(nodes[0]?.kind).toBe("table-access");
-    expect(nodes[0]?.label).toBe("表アクセス: SYSCOLUMNS");
+    expect(nodes[0]?.kind).toBe("table-scan");
+    expect(nodes[0]?.label).toBe("表の走査: SYSCOLUMNS");
     expect(nodes[0]?.totalRows).toBe(669108);
-    expect(nodes[1]?.kind).toBe("access-method");
-    expect(nodes[1]?.label).toBe("索引使用: QADBILLB");
+    expect(nodes[1]?.kind).toBe("index-used");
+    expect(nodes[1]?.label).toBe("索引の使用: QADBILLB");
   });
 
-  it("3001 に索引名が無ければ「表全体の走査」", () => {
+  it("3001 に索引名が無ければ対象表を添える", () => {
     const plan = buildQueryPlan([rec({ QQRID: 3001, QVQLIB: "QTEMP", QVQTBL: "VT1" })], META);
-    expect(plan.blocks[0]?.nodes[0]?.label).toBe("表全体の走査: VT1");
+    expect(plan.blocks[0]?.nodes[0]?.label).toBe("索引の使用: VT1");
   });
 
-  it("**知らない種別に名前を付けない**（3015 は other で、種別番号を出す）", () => {
-    const plan = buildQueryPlan([rec({ QQRID: 3015, QQRCOD: "A0" })], META);
+  it("IBM の文書と実測が一致した種別に名前が付く（抜き取り）", () => {
+    const cases: [number, string, string][] = [
+      [3003, "sort", "並べ替え"],
+      [3015, "statistics", "統計情報"],
+      [3023, "temp-hash-table", "一時ハッシュ表の作成"],
+      [3025, "distinct", "重複の除去"],
+      [3026, "set-operation", "集合演算"],
+      [3028, "grouping", "グループ化"]
+    ];
+    for (const [rid, kind, label] of cases) {
+      const node = buildQueryPlan([rec({ QQRID: rid })], META).blocks[0]?.nodes[0];
+      expect(node?.kind).toBe(kind);
+      expect(node?.label).toBe(label);
+    }
+  });
+
+  it("**計画のステップと付帯情報を分ける**（図が付帯情報で埋まらないように）", () => {
+    const plan = buildQueryPlan(
+      [
+        rec({ QQRID: 3000, QVQTBL: "T" }), // 表の走査＝ステップ
+        rec({ QQRID: 3006 }), // アクセスプランの再作成＝付帯情報
+        rec({ QQRID: 3014 }) // クエリ情報＝付帯情報
+      ],
+      META
+    );
+    const nodes = plan.blocks[0]?.nodes ?? [];
+    expect(nodes.map((n) => n.category)).toEqual(["step", "info", "info"]);
+    expect(plan.summary.stepCount).toBe(1);
+    expect(plan.summary.nodeCount).toBe(3);
+  });
+
+  it("名前を与えていない種別は info に寄せる（意味の分からない箱を計画の流れに混ぜない）", () => {
+    const plan = buildQueryPlan([rec({ QQRID: 5002 })], META);
+    expect(plan.blocks[0]?.nodes[0]?.category).toBe("info");
+  });
+
+  it("**知らない種別に名前を付けない**（5005 は other で、種別番号を出す）", () => {
+    // 5005 は観測はしたが、文書化された名称を確認できていない
+    const plan = buildQueryPlan([rec({ QQRID: 5005, QQRCOD: "A0" })], META);
     const node = plan.blocks[0]?.nodes[0];
     expect(node?.kind).toBe("other");
-    expect(node?.label).toBe("記録 3015");
-    expect(node?.recordType).toBe(3015);
+    expect(node?.label).toBe("記録 5005");
+    expect(node?.recordType).toBe(5005);
   });
 
   it("未知の種別は unknownRecordTypes に積む（版数差を黙って捨てない）", () => {
     const plan = buildQueryPlan(
       [
         rec({ QQRID: 3000, QVQTBL: "T" }),
-        rec({ QQRID: 3015 }),
-        rec({ QQRID: 3006 }),
-        rec({ QQRID: 3015 })
+        rec({ QQRID: 5002 }),
+        rec({ QQRID: 3018 }),
+        rec({ QQRID: 5002 })
       ],
       META
     );
     // 重複なし・昇順
-    expect(plan.unknownRecordTypes).toEqual([3006, 3015]);
+    expect(plan.unknownRecordTypes).toEqual([3018, 5002]);
   });
 
   it("other でも値の入った列は属性に残る（情報を落とさない）", () => {
-    const plan = buildQueryPlan([rec({ QQRID: 3026, QQRCOD: "X1", QQTOTR: 7 })], META);
+    const plan = buildQueryPlan([rec({ QQRID: 5002, QQRCOD: "X1", QQTOTR: 7 })], META);
     const attrs = plan.blocks[0]?.nodes[0]?.attributes ?? [];
-    expect(attrs).toContainEqual({ label: "記録種別", value: "3026" });
+    expect(attrs).toContainEqual({ label: "記録種別", value: "5002" });
     expect(attrs).toContainEqual({ label: "理由コード", value: "X1" });
     expect(attrs).toContainEqual({ label: "総行数", value: "7" });
   });
@@ -145,13 +182,13 @@ describe("ノードにしない記録", () => {
   });
 
   it("**ノードにできなくても未対応種別としては記録する**（版数差を黙って消さない）", () => {
-    // 7.5 だけに出る 3015 が QQQDTN を持つ保証は無い。ここを落とすと版数差が見えなくなる
+    // ブロック番号を持たない記録を落とすと、名前の無い種別が黙って消える
     const plan = buildQueryPlan(
-      [rec({ QQRID: 3015, QQQDTN: null }), rec({ QQRID: 3000, QVQTBL: "T" })],
+      [rec({ QQRID: 5005, QQQDTN: null }), rec({ QQRID: 3000, QVQTBL: "T" })],
       META
     );
     expect(plan.summary.nodeCount).toBe(1);
-    expect(plan.unknownRecordTypes).toContain(3015);
+    expect(plan.unknownRecordTypes).toContain(5005);
   });
 
   it("3019 は未対応種別に数えない（意図して要約に回している）", () => {
