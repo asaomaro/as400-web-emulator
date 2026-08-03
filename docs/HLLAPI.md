@@ -202,15 +202,49 @@ f = 12: Call hllapi(f, d, l, r)   ' Release
 ## ビルド
 
 ```sh
-cd crates/hllapi
-cargo build --release
+./scripts/build-hllapi.sh              # そのホスト向け（.so / .dylib）
+./scripts/build-hllapi.sh --windows    # Windows 版 64bit ＋ 32bit も
 ```
 
-- Linux → `target/release/libts5250hllapi.so`
-- Windows（64bit）→ `--target x86_64-pc-windows-msvc`
-- Windows（32bit）→ `--target i686-pc-windows-msvc`
+Windows 上で MSVC ツールチェーンを使う場合:
+
+```powershell
+pwsh -File scripts\build-hllapi.ps1 -Arch both -Install C:\ts5250
+```
 
 **外部クレートを使っていない**ので、レジストリへ取りに行かずにビルドできる。
+
+| 出力 | 使いどころ |
+|---|---|
+| `target/release/libts5250hllapi.so` | Linux |
+| `target/x86_64-pc-windows-gnu/release/ts5250hllapi.dll` | **64bit Office** |
+| `target/i686-pc-windows-gnu/release/ts5250hllapi.dll` | **32bit Office** |
+
+### スクリプトが面倒を見ること
+
+- **C コンパイラが無い環境**では `cc` をリンカに使えないので `rust-lld` へ切り替える
+- **Windows 版に要る mingw の import ライブラリを、root 無しで取ってくる**
+  （`apt-get download` ＋ `dpkg -x`。既に入っていればそれを使う。`MINGW_ROOT` でも指定可）
+- `rustup target add` を必要に応じて実行する
+- **リポジトリには何も焼き込まない**（`.cargo/config.toml` を置かない）。
+  必要なものは実行時に環境変数で渡す
+
+### 出来たものを必ず検査する
+
+```sh
+python3 scripts/check-hllapi-dll.py <dll または so>
+```
+
+**ビルドが通ったことは正しさの保証にならない。** 見ているのは 2 つ:
+
+1. **4 つのエントリが装飾なしの名前で出ているか。**
+   32bit の `stdcall` は普通 `_hllapi@16` に装飾される。VBA の `Declare` は
+   装飾なしの名前を引くので、装飾されていると「関数が見つかりません」になる
+2. **32bit 版が本当に `stdcall` か。** `extern "C"`（cdecl）のままだと VBA から
+   呼んだ瞬間にスタックが壊れる。**名前からは判別できない**ので機械語の `ret` を見る
+   （`ret 0x10` = 4 引数を呼ばれた側が片付ける = `stdcall`）
+
+`build-hllapi.sh` / `.ps1` はビルドの後で自動的にこれを走らせる。
 
 ### 呼び出し規約
 
@@ -220,6 +254,16 @@ WinHLLAPI と VB / VBA の `Declare` は既定が `stdcall` なので、`extern 
 
 **Office と DLL のビット数は合わせること。** 合っていないと
 「指定されたモジュールが見つかりません」になる（パスの問題ではない）。
+
+### 検証済みのこと / まだのこと
+
+| | 状態 |
+|---|---|
+| Linux 版のビルドと実動作 | ✅ 実機 33/33 ＋ E2E 18/18 |
+| **Windows 版（64/32bit）のビルド** | ✅ `build-hllapi.sh --windows` で生成 |
+| **エクスポート名と呼び出し規約** | ✅ `check-hllapi-dll.py` で検査 |
+| **Windows 上での実行** | ❌ **未検証**（この開発環境に Windows が無い） |
+| **VBA の `Declare` 経由の呼び出し** | ❌ **未検証** |
 
 ## Excel / VBA から使う
 
@@ -243,8 +287,50 @@ MsgBox ScreenLine(s, 1)          ' 1 行目（Mid で切れる）
 ```
 
 > ⚠ **VBA からの実行は確かめていない**（この開発環境に Windows と Excel が無い）。
-> C ABI としては Python の `ctypes` で 33 件通っているが、
-> **VBA の `Declare` を通した動作は未検証**。
+> C ABI としては Python の `ctypes` で 33 件通り、DLL の呼び出し規約も機械語で
+> 確かめてあるが、**VBA の `Declare` を通した動作そのものは未検証**。
+
+### `cargo test` が動かない環境
+
+C コンパイラが無いとテスト実行ファイルをリンクできない（`crt1.o` が無い）。
+`selftest` フィーチャで検査を共有ライブラリから走らせられる
+——**中身は `cargo test` と同じ関数**（`src/selftest.rs`）なので二重に書いていない。
+`build-hllapi.sh` はネイティブ版にこのフィーチャを付けてビルドする。
+
+## 検証済みのこと / まだのこと
+
+| | 状態 |
+|---|---|
+| Linux 版のビルドと実動作 | ✅ 実機 33/33 ＋ E2E 18/18 |
+| **Windows 版（64/32bit）のビルド** | ✅ `build-hllapi.sh --windows` で生成 |
+| **エクスポート名と呼び出し規約** | ✅ `check-hllapi-dll.py` で検査 |
+| **Windows 上での実行** | ❌ **未検証**（この開発環境に Windows が無い） |
+| **VBA の `Declare` 経由の呼び出し** | ❌ **未検証** |
+
+## Excel / VBA から使う
+
+- `docs/hllapi-sample.bas` — VBE の「ファイル」→「ファイルのインポート」で読み込む。
+  `Connect` / `Reserve` / `CopyScreen` などのラッパと、動く例が 4 つ入っている
+- `scripts/make-hllapi-xlsm.ps1` — 上記を組み込んだ `.xlsm` を **Windows 上の Excel に作らせる**
+  （`.xlsm` の VBA プロジェクトは OLE 複合ファイルなので Linux 側では組めない）
+
+```powershell
+pwsh -File scripts\make-hllapi-xlsm.ps1 -DllPath C:\ts5250\ts5250hllapi.dll
+```
+
+**文字コードの変換は書かなくてよい。** VBA の `Declare` は `ByVal ... As String` を
+ANSI（日本語 Windows では CP932）へ自動変換して渡し、戻りで書き戻す。
+DLL 側も CP932 なので、`Space$(1920)` の器がそのまま画面 1 枚になる。
+
+```vb
+Dim s As String
+s = CopyScreen()                 ' 1920 バイト
+MsgBox ScreenLine(s, 1)          ' 1 行目（Mid で切れる）
+```
+
+> ⚠ **VBA からの実行は確かめていない**（この開発環境に Windows と Excel が無い）。
+> C ABI としては Python の `ctypes` で 33 件通り、DLL の呼び出し規約も機械語で
+> 確かめてあるが、**VBA の `Declare` を通した動作そのものは未検証**。
 
 ### ⚠ Windows は未検証
 
@@ -274,12 +360,20 @@ cargo build --release --features selftest
 
 ## 検証
 
+| スクリプト | 見るもの | 結果 |
+|---|---|---|
+| `scripts/check-hllapi-dll.py` | エクスポート名・**呼び出し規約**（機械語） | 3 種すべて OK |
+| `scripts/verify-hllapi-osaka.mjs` | **本物の C ABI** ↔ 実機セッション | 33/33 |
+| `scripts/verify-hllapi-browser.mjs` | **DLL → 実機 → 実物のブラウザ**（Playwright） | 18/18 |
+
 ```sh
+python3 scripts/check-hllapi-dll.py crates/hllapi/target/*/release/*.dll
 node --env-file=.env scripts/verify-hllapi-osaka.mjs
+node --env-file=.env scripts/verify-hllapi-browser.mjs
 ```
 
-**本物の C ABI**（Python の `ctypes` で共有ライブラリを動的リンク）で、
-実機のセッションに対して Connect → Copy PS → Search → Disconnect を通す。
+`ctypes` を挟むのは、**C ABI をそのまま叩く**ため。TypeScript から HTTP を叩くだけでは
+C ABI の引数の受け渡しを確かめたことにならない。
 
 ## 設計の要点
 
