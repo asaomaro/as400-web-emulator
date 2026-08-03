@@ -16,6 +16,17 @@ Attribute VB_Name = "Ts5250Hllapi"
 '   呼び出し規約は DLL 側が extern "system"（32bit では stdcall）なので、
 '   VBA の Declare（既定 stdcall）とそのまま合う。
 '
+' ■ 他の HLLAPI 実装（PCOMM / 旧 iSeries Access）と比べるとき
+'   下の Declare の Lib を相手の DLL 名に変えれば、**同じコードが動く**。
+'     PCOMM              → "pcshll32.dll"（または "ehlapi32.dll"）
+'     iSeries Access(旧) → PC5250 の EHLLAPI
+'   どれが入っているかは scripts\find-hllapi.ps1 が実際に調べる（記憶で決めない）。
+'   ACS 本体（Java 版）は HLLAPI を持たない。
+'
+'   ただし **Connect の第 2 引数（セッション指定）は ts5250 独自**。
+'   他の実装へ投げると短縮名として解釈されず失敗する。
+'   両方で動かすなら Connect("A") と書くこと（標準どおりの動作になる）。
+'
 ' ■ 文字コード
 '   画面は **CP932（Shift-JIS）** で入出力する。1 桁 = 1 バイト、全角は 2 バイト。
 '   24x80 の画面はちょうど 1920 バイトなので Space$(1920) の器に収まる。

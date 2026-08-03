@@ -265,6 +265,25 @@ WinHLLAPI と VB / VBA の `Declare` は既定が `stdcall` なので、`extern 
 | **Windows 上での実行** | ❌ **未検証**（この開発環境に Windows が無い） |
 | **VBA の `Declare` 経由の呼び出し** | ❌ **未検証** |
 
+## 他の HLLAPI 実装と比べる
+
+同じ VBA を **PCOMM / 旧 iSeries Access** に対しても動かせる（`Declare` の `Lib` を
+変えるだけ）。**ACS 本体（Java 版）は HLLAPI を持たない**——追加で入れるものがあるとすれば
+「IBM i Access Client Solutions - Windows Application Package」だが、
+そこに含まれるかどうかは版による。
+
+**記憶や伝聞で決めずに、実際に調べること:**
+
+```powershell
+pwsh -File scripts\find-hllapi.ps1
+```
+
+IBM 系のフォルダを走査し、**DLL のエクスポートを実際に読んで** HLLAPI のエントリを
+持つものを挙げる（名前とビット数も出る）。VBA の `Declare` に書く DLL 名はこれで決まる。
+
+> ⚠ **`Connect` の第 2 引数（セッション指定）は ts5250 独自。** 他の実装へ投げると
+> 短縮名として解釈されず失敗する。両方で動かすなら `Connect("A")` と書くこと。
+
 ## Excel / VBA から使う
 
 - `docs/hllapi-sample.bas` — VBE の「ファイル」→「ファイルのインポート」で読み込む。
@@ -306,6 +325,25 @@ C コンパイラが無いとテスト実行ファイルをリンクできない
 | **エクスポート名と呼び出し規約** | ✅ `check-hllapi-dll.py` で検査 |
 | **Windows 上での実行** | ❌ **未検証**（この開発環境に Windows が無い） |
 | **VBA の `Declare` 経由の呼び出し** | ❌ **未検証** |
+
+## 他の HLLAPI 実装と比べる
+
+同じ VBA を **PCOMM / 旧 iSeries Access** に対しても動かせる（`Declare` の `Lib` を
+変えるだけ）。**ACS 本体（Java 版）は HLLAPI を持たない**——追加で入れるものがあるとすれば
+「IBM i Access Client Solutions - Windows Application Package」だが、
+そこに含まれるかどうかは版による。
+
+**記憶や伝聞で決めずに、実際に調べること:**
+
+```powershell
+pwsh -File scripts\find-hllapi.ps1
+```
+
+IBM 系のフォルダを走査し、**DLL のエクスポートを実際に読んで** HLLAPI のエントリを
+持つものを挙げる（名前とビット数も出る）。VBA の `Declare` に書く DLL 名はこれで決まる。
+
+> ⚠ **`Connect` の第 2 引数（セッション指定）は ts5250 独自。** 他の実装へ投げると
+> 短縮名として解釈されず失敗する。両方で動かすなら `Connect("A")` と書くこと。
 
 ## Excel / VBA から使う
 
