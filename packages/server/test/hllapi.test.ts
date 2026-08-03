@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { callHllapi, HllapiState, type HllapiDeps } from "../src/hllapi.js";
 import { HF, HRC } from "../src/hllapi-types.js";
+import { As400Error } from "@ts5250/base";
 import type { SessionManager } from "../src/session-manager.js";
 import { encodeCp932, decodeCp932 } from "../src/hllapi-cp932.js";
 import type { Cell, CellKind, Field, ScreenSnapshot } from "@ts5250/tn5250";
@@ -64,12 +65,21 @@ function snap(opts: {
 /** 偽の SessionManager。**実機に触らずに分岐だけ検証する** */
 function fakeDeps(opts: {
   snapshot?: ScreenSnapshot;
-  sessions?: { id: string; connectedAt: string }[];
+  sessions?: { id: string; connectedAt: string; target?: { system?: string; session?: string; name?: string } }[];
   setField?: (t: unknown, v: string) => void;
   sendAid?: ReturnType<typeof vi.fn>;
   keyAllowed?: boolean;
   writable?: boolean;
-} = {}): { deps: HllapiDeps; sendAid: ReturnType<typeof vi.fn>; setField: ReturnType<typeof vi.fn> } {
+  /** 既に別の主体が予約している状態から始める */
+  reservedBy?: string;
+} = {}): {
+  deps: HllapiDeps;
+  sendAid: ReturnType<typeof vi.fn>;
+  setField: ReturnType<typeof vi.fn>;
+  /** いま予約している主体（`undefined` なら空き） */
+  holder: () => string | undefined;
+} {
+  let holder: string | undefined = opts.reservedBy;
   const snapshot = opts.snapshot ?? snap({});
   const sendAid = opts.sendAid ?? vi.fn(async () => ({ screen: snapshot, timedOut: false }));
   const setField = vi.fn(opts.setField ?? (() => undefined));
@@ -77,6 +87,7 @@ function fakeDeps(opts: {
     id: e.id,
     connectedAt: e.connectedAt,
     host: "h",
+    ...((e as { target?: unknown }).target !== undefined ? { target: (e as { target?: unknown }).target } : {}),
     session: { snapshot: () => snapshot, sendAid, setField }
   }));
   const sessions = {
@@ -91,12 +102,28 @@ function fakeDeps(opts: {
     },
     assertWritable: () => {
       if (opts.writable === false) throw new Error("read only");
-    }
+    },
+    // 予約は**本物と同じ意味**で動かす（HLLAPI 側の分岐を意味のある形で検査するため）。
+    // 実装そのものの検査は `session-manager.test.ts`
+    reserve: (_id: string, h: string) => {
+      // 本物は assertWritable を通す（閲覧専用は予約できない）
+      if (opts.writable === false) throw new As400Error("READ_ONLY_SESSION", "read only");
+      if (holder !== undefined && holder !== h) {
+        throw new As400Error("SESSION_RESERVED", "reserved");
+      }
+      holder = h;
+    },
+    release: (_id: string, h: string) => {
+      if (holder === h) holder = undefined;
+    },
+    touchReservation: () => undefined,
+    reservationOf: () => (holder === undefined ? undefined : { holder, label: "HLLAPI", expiresAt: 0 })
   } as unknown as SessionManager;
   return {
     deps: { sessions, state: new HllapiState(), sleep: async () => undefined },
     sendAid,
-    setField
+    setField,
+    holder: () => holder
   };
 }
 
@@ -124,7 +151,7 @@ async function connected(opts: Parameters<typeof fakeDeps>[0] = {}) {
 describe("未実装の扱い", () => {
   it("**未実装の機能番号は rc=10**（黙って成功にしない）", async () => {
     const { deps } = await connected();
-    for (const fn of [HF.SET_SESSION_PARAMETERS, HF.RESERVE, HF.COPY_OIA, HF.SEND_FILE, HF.GET_KEY]) {
+    for (const fn of [HF.SET_SESSION_PARAMETERS, HF.COPY_OIA, HF.SEND_FILE, HF.GET_KEY]) {
       expect((await call(deps, fn)).rc).toBe(HRC.FUNCTION_UNAVAILABLE);
     }
   });
@@ -367,5 +394,146 @@ describe("待ち", () => {
   it("**ロックしたままなら時間切れで rc=4**（無限に待たない）", async () => {
     const { deps } = await connected({ snapshot: snap({ locked: true }) });
     expect((await call(deps, HF.WAIT)).rc).toBe(HRC.PS_BUSY);
+  });
+});
+
+/**
+ * **予約**（`Reserve` 11 / `Release` 12）。
+ *
+ * これが無いと、利用者がブラウザで打っている最中に自動操作が画面を変えられる。
+ * 5250 は欄の値を AID と一緒に送るので、**同じ画面に 2 人が書くと衝突する**。
+ */
+describe("予約（Reserve / Release）", () => {
+  it("**Reserve が通り、Release で戻る**", async () => {
+    const f = await connected();
+    expect((await call(f.deps, HF.RESERVE)).rc).toBe(HRC.SUCCESSFUL);
+    expect(f.holder()).toBe("hllapi:");
+    expect((await call(f.deps, HF.RELEASE)).rc).toBe(HRC.SUCCESSFUL);
+    expect(f.holder()).toBeUndefined();
+  });
+
+  it("**別の主体が持っていたら rc=11**（資源が使えない）", async () => {
+    const f = await connected({ reservedBy: "someone-else" });
+    expect((await call(f.deps, HF.RESERVE)).rc).toBe(HRC.RESOURCE_UNAVAILABLE);
+  });
+
+  it("同じ主体の再予約は通る（期限の延長。何度呼ばれても壊れない）", async () => {
+    const f = await connected();
+    expect((await call(f.deps, HF.RESERVE)).rc).toBe(HRC.SUCCESSFUL);
+    expect((await call(f.deps, HF.RESERVE)).rc).toBe(HRC.SUCCESSFUL);
+  });
+
+  it("**Disconnect で予約が外れる**（正常終了したのに締め切ったままにしない）", async () => {
+    const f = await connected();
+    await call(f.deps, HF.RESERVE);
+    expect(f.holder()).toBe("hllapi:");
+    expect((await call(f.deps, HF.DISCONNECT_PS, { data: "A" })).rc).toBe(HRC.SUCCESSFUL);
+    expect(f.holder()).toBeUndefined();
+  });
+
+  it("持っていなくても Release は成功（HLLAPI の慣行）", async () => {
+    const f = await connected();
+    expect((await call(f.deps, HF.RELEASE)).rc).toBe(HRC.SUCCESSFUL);
+  });
+
+  it("**接続していなければ rc=8**（順序違い。予約も接続を要する）", async () => {
+    const { deps } = fakeDeps();
+    expect((await call(deps, HF.RESERVE)).rc).toBe(HRC.PROCEDURE_ERROR);
+  });
+
+  it("**閲覧専用は予約できない**（予約しても書けない）", async () => {
+    const f = await connected({ writable: false });
+    expect((await call(f.deps, HF.RESERVE)).rc).toBe(HRC.FUNCTION_INHIBITED);
+  });
+});
+
+/**
+ * **どのシステムのどのセッションかを指定する**（ts5250 の拡張）。
+ *
+ * 標準の `Connect` は短縮名 1 文字しか渡さないので、開いた順でしか指せない。
+ * 自動化にとってこれは危うい——順番が変われば**別のシステムの本番画面**を操作しうる。
+ * `"A <指定>"` と書けるようにして、当たらなければ**繋がずに断る**。
+ */
+describe("Connect の指定（どのシステムのどのセッションか）", () => {
+  const two = {
+    sessions: [
+      { id: "id-honban", connectedAt: "2026-08-03T00:00:00Z",
+        target: { system: "srv:pa", session: "srv:s1", name: "本番" } },
+      { id: "id-kensho", connectedAt: "2026-08-03T01:00:00Z",
+        target: { system: "srv:pb", session: "srv:s2", name: "検証" } }
+    ]
+  };
+  /** 短縮名 A がどのセッションを指しているか（Query Sessions の行から読む） */
+  const boundTo = async (deps: HllapiDeps): Promise<string> =>
+    text(await call(deps, HF.QUERY_SESSIONS, { length: 256 })).trim();
+
+  it("**名前で指せる**（開いた順に依らない）", async () => {
+    const { deps } = fakeDeps(two);
+    expect((await call(deps, HF.CONNECT_PS, { data: "A 検証" })).rc).toBe(HRC.SUCCESSFUL);
+    expect(await boundTo(deps)).toContain("検証");
+  });
+
+  it("**設定の参照でも指せる**", async () => {
+    const { deps } = fakeDeps(two);
+    expect((await call(deps, HF.CONNECT_PS, { data: "A srv:s2" })).rc).toBe(HRC.SUCCESSFUL);
+    expect(await boundTo(deps)).toContain("検証");
+  });
+
+  it("**セッション id でも指せる**", async () => {
+    const { deps } = fakeDeps(two);
+    expect((await call(deps, HF.CONNECT_PS, { data: "A id-honban" })).rc).toBe(HRC.SUCCESSFUL);
+    expect(await boundTo(deps)).toContain("本番");
+  });
+
+  it("**システムと名前の組で指せる**（名前が重なるとき）", async () => {
+    const { deps } = fakeDeps(two);
+    expect((await call(deps, HF.CONNECT_PS, { data: "A srv:pa/本番" })).rc).toBe(HRC.SUCCESSFUL);
+    expect(await boundTo(deps)).toContain("本番");
+  });
+
+  it("大文字小文字は無視する（VBA から書く名前なので）", async () => {
+    const { deps } = fakeDeps({
+      sessions: [{ id: "x", connectedAt: "2026-08-03T00:00:00Z", target: { name: "Main" } }]
+    });
+    expect((await call(deps, HF.CONNECT_PS, { data: "A main" })).rc).toBe(HRC.SUCCESSFUL);
+  });
+
+  it("**当たらなければ繋がない**（黙って別の画面を操作させない）", async () => {
+    const { deps } = fakeDeps(two);
+    expect((await call(deps, HF.CONNECT_PS, { data: "A 存在しない" })).rc).toBe(HRC.PS_ID_INVALID);
+    // 繋がっていないので、以降の操作は順序違い
+    expect((await call(deps, HF.COPY_PS, { length: 20 })).rc).toBe(HRC.PROCEDURE_ERROR);
+  });
+
+  it("**曖昧なら断る**（同じ名前が 2 つ開いている）", async () => {
+    const { deps } = fakeDeps({
+      sessions: [
+        { id: "a", connectedAt: "2026-08-03T00:00:00Z", target: { name: "同じ" } },
+        { id: "b", connectedAt: "2026-08-03T01:00:00Z", target: { name: "同じ" } }
+      ]
+    });
+    expect((await call(deps, HF.CONNECT_PS, { data: "A 同じ" })).rc).toBe(HRC.RESOURCE_UNAVAILABLE);
+  });
+
+  it("**固定長バッファの NUL 埋めを無視する**（VBA の `String * 64` / C の `char[64]`）", async () => {
+    const { deps } = fakeDeps(two);
+    const padded = "A 検証".padEnd(64, "\0");
+    expect((await call(deps, HF.CONNECT_PS, { data: padded, length: 64 })).rc).toBe(HRC.SUCCESSFUL);
+    expect(await boundTo(deps)).toContain("検証");
+  });
+
+  it("**指定なしは従来どおり**（既存の資産が動く）", async () => {
+    const { deps } = fakeDeps(two);
+    expect((await call(deps, HF.CONNECT_PS, { data: "A" })).rc).toBe(HRC.SUCCESSFUL);
+    expect(await boundTo(deps)).toContain("本番"); // 古い順に A
+  });
+
+  it("**Query Sessions が指定の書き方を出す**（これが無いと指し方が分からない）", async () => {
+    const { deps } = fakeDeps(two);
+    await call(deps, HF.CONNECT_PS, { data: "A 検証" });
+    await call(deps, HF.CONNECT_PS, { data: "B 本番" });
+    const lines = (await boundTo(deps)).split("\n").sort();
+    expect(lines[0]).toMatch(/^A h 2x10 検証$/u);
+    expect(lines[1]).toMatch(/^B h 2x10 本番$/u);
   });
 });

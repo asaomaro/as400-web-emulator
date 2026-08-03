@@ -68,7 +68,7 @@ hllapi(&func, data, &len, &rc);   /* rc == 0 なら成功 */
 
 | # | 機能 | 備考 |
 |---|---|---|
-| 1 | Connect Presentation Space | `data[0]` が短縮名（`A`〜`Z`）。**セッションは開かない** |
+| 1 | Connect Presentation Space | `data[0]` が短縮名（`A`〜`Z`）。**セッションは開かない**。<br>`"A <指定>"` で狙ったセッションを指せる（下記） |
 | 2 | Disconnect Presentation Space | **セッションは閉じない** |
 | 3 | Send Key | ニーモニック（下記） |
 | 4 | Wait | キーボードのロックが解けるまで。最大 30 秒 |
@@ -76,7 +76,9 @@ hllapi(&func, data, &len, &rc);   /* rc == 0 なら成功 */
 | 6 | Search Presentation Space | 見つかった位置を `rc` に返す |
 | 7 | Query Cursor Location | 位置を `rc` に返す |
 | 8 | Copy PS to String | `rc`（入力）または現在のカーソルから |
-| 10 | Query Sessions | 短縮名・ホスト・画面サイズ |
+| 10 | Query Sessions | 短縮名・ホスト・画面サイズ・**指定に使える名前** |
+| 11 | Reserve | **自動操作の間、人間の入力を締め出す**（下記） |
+| 12 | Release | 予約を外す |
 | 15 | Copy String to Presentation Space | 入力欄のみ |
 | 18 | Pause | `length` は 1/2 秒単位。最大 30 秒 |
 | 20 | Query System | 実装の識別 |
@@ -91,8 +93,65 @@ hllapi(&func, data, &len, &rc);   /* rc == 0 なら成功 */
 
 **上記以外はすべて `rc=10`（`HRC_FUNCTION_UNAVAILABLE`）で断る。** 黙って成功にしない。
 
-未対応の主なもの: Set Session Parameters (9)、Reserve/Release (11/12)、Copy OIA (13)、
+未対応の主なもの: Set Session Parameters (9)、Copy OIA (13)、
 Query Field Attribute (14)、キーストローク傍受 (50〜53)、ファイル転送 (90/91)。
+
+## どのシステムのどのセッションかを指定する
+
+標準の `Connect` は短縮名 1 文字しか渡さないので、**開いた順**でしか指せない。
+自動化にとってこれは危うい——順番が変われば別のシステムの本番画面を操作しうる。
+
+そこで `Connect` のバッファに**続けて指定を書ける**ようにしてある（ts5250 の拡張）。
+
+```vb
+f = 1: d = "A 検証" & Space$(120): l = 128    ' セッション名で指す
+Call hllapi(f, d, l, r)
+```
+
+指定に書けるもの（**大文字小文字は無視**、最初の NUL までを読む）:
+
+| 書き方 | 例 |
+|---|---|
+| セッション設定の**名前** | `検証` |
+| 設定の参照 | `srv:s-kensho` |
+| `<システム参照>/<名前>` | `srv:osaka/検証` （名前が重なるとき） |
+| 実行中のセッション id | `3f9c…` |
+
+- **当たらなければ繋がない**（`rc=1`）。黙って別のセッションへ繋がない
+- **同じ名前が 2 つ開いていたら断る**（`rc=11`）
+- **指定を省けば従来どおり**（`"A"` だけ）——既存の資産はそのまま動く
+
+指定に書ける名前は **`Query Sessions` (10) が出す**（4 列目）:
+
+```
+A 10.0.0.5 24x80 検証
+```
+
+> `Connect` は**セッションを開かない**（HLLAPI の仕様）。先に web-ui / MCP で開いておくこと。
+
+## 排他 — `Reserve` / `Release`
+
+**同じセッションをブラウザと自動化が同時に触る**のがこの実装の前提。
+5250 セッションの実体はサーバーにあり、ブラウザはそれを見ている view にすぎない
+（HLLAPI は 2 人目のクライアント）。
+
+5250 は**入力欄の値を AID と一緒に送る**ので、ブラウザは Enter を押すまで打ちかけを
+手元に持っている。その最中に自動化が画面を変えると、打ちかけの行き先が消える。
+自動操作の前後を `Reserve` / `Release` で囲むこと。
+
+```vb
+f = 11: Call hllapi(f, d, l, r)   ' Reserve — 以降、人間は打てない
+' ... 自動操作 ...
+f = 12: Call hllapi(f, d, l, r)   ' Release
+```
+
+- 予約中、**ブラウザと MCP からの書き込みは断られる**（HTTP なら 409 / `SESSION_RESERVED`）。
+  画面には「HLLAPI が自動操作中です」と出る
+- 既に**別の使い手**が予約していれば `rc=11`
+- **`Disconnect` (2) でも外れる**（正常終了したのに締め切ったままにしない）
+- **2 分で自動的に切れる**。呼び出しのたびに延びる。
+  接続層は状態を持たない＝**落ちた自動化は `Release` を送れない**ので、期限が要る
+- それでも詰まったら、**画面の「解除して操作する」で利用者が取り戻せる**
 
 ## キーのニーモニック
 
@@ -132,6 +191,7 @@ Query Field Attribute (14)、キーストローク傍受 (50〜53)、ファイ�
 | 8 | 呼ぶ順序が違う（接続していない） |
 | 9 | システムエラー（**サーバーへ届かない**） |
 | 10 | **未対応の機能** |
+| 11 | 他の使い手が予約している（`Reserve`） |
 | 20 | 写せないキー |
 | 26 | Pause の途中で画面が変わった |
 | 28 | 欄の長さが 0 |
@@ -144,9 +204,44 @@ cargo build --release
 ```
 
 - Linux → `target/release/libts5250hllapi.so`
-- Windows → `target/release/ts5250hllapi.dll`（`--target x86_64-pc-windows-msvc` 等）
+- Windows（64bit）→ `--target x86_64-pc-windows-msvc`
+- Windows（32bit）→ `--target i686-pc-windows-msvc`
 
 **外部クレートを使っていない**ので、レジストリへ取りに行かずにビルドできる。
+
+### 呼び出し規約
+
+エクスポートは **`extern "system"`**——32bit Windows では `stdcall`、それ以外では `C`。
+WinHLLAPI と VB / VBA の `Declare` は既定が `stdcall` なので、`extern "C"`（cdecl）だと
+**32bit Office からの呼び出しでスタックが壊れる**。64bit では規約が 1 つしかないので違いは出ない。
+
+**Office と DLL のビット数は合わせること。** 合っていないと
+「指定されたモジュールが見つかりません」になる（パスの問題ではない）。
+
+## Excel / VBA から使う
+
+- `docs/hllapi-sample.bas` — VBE の「ファイル」→「ファイルのインポート」で読み込む。
+  `Connect` / `Reserve` / `CopyScreen` などのラッパと、動く例が 4 つ入っている
+- `scripts/make-hllapi-xlsm.ps1` — 上記を組み込んだ `.xlsm` を **Windows 上の Excel に作らせる**
+  （`.xlsm` の VBA プロジェクトは OLE 複合ファイルなので Linux 側では組めない）
+
+```powershell
+pwsh -File scripts\make-hllapi-xlsm.ps1 -DllPath C:\ts5250\ts5250hllapi.dll
+```
+
+**文字コードの変換は書かなくてよい。** VBA の `Declare` は `ByVal ... As String` を
+ANSI（日本語 Windows では CP932）へ自動変換して渡し、戻りで書き戻す。
+DLL 側も CP932 なので、`Space$(1920)` の器がそのまま画面 1 枚になる。
+
+```vb
+Dim s As String
+s = CopyScreen()                 ' 1920 バイト
+MsgBox ScreenLine(s, 1)          ' 1 行目（Mid で切れる）
+```
+
+> ⚠ **VBA からの実行は確かめていない**（この開発環境に Windows と Excel が無い）。
+> C ABI としては Python の `ctypes` で 33 件通っているが、
+> **VBA の `Declare` を通した動作は未検証**。
 
 ### ⚠ Windows は未検証
 

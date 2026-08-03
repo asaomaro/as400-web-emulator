@@ -72,7 +72,22 @@ export class HllapiState {
     this.byUser.set(k, created);
     return created;
   }
+
+  /**
+   * 予約の持ち主としての識別子。
+   *
+   * **利用者ごとに 1 つ**——短縮名の対応表と同じ粒度にする。接続層は状態を持たないので、
+   * 同じ利用者の HLLAPI 呼び出しは**別プロセスからでも同じ自動化の続き**として扱う
+   * （実機で「別プロセスから Connect し直せる」ことを確認済み）。
+   * プロセスごとに分けると、落ちて上がり直した自動化が自分の予約に弾かれる。
+   */
+  holderOf(user?: AuthUser): string {
+    return `hllapi:${this.keyOf(user)}`;
+  }
 }
+
+/** 予約中であることを利用者に見せる名前 */
+export const HLLAPI_RESERVATION_LABEL = "HLLAPI";
 
 export interface HllapiDeps {
   sessions: SessionManager;
@@ -122,7 +137,7 @@ export async function callHllapi(
     case HF.CONNECT_PS:
       return connect(deps, conns, req, user);
     case HF.DISCONNECT_PS:
-      return disconnect(conns, req);
+      return disconnect(deps, conns, req, user);
     case HF.QUERY_SESSIONS:
       return querySessions(deps, conns, user);
     case HF.QUERY_SYSTEM:
@@ -154,9 +169,16 @@ async function withConnection(
     // セッションが消えている（閉じられた・期限切れ）
     return { rc: HRC.PS_ID_INVALID };
   }
+  // **操作のたびに予約を延ばす。** 接続層は状態を持たないので、落ちた自動化は
+  // `Release` を送れない。期限で自然に解けるようにしておき、生きている間は延ばす
+  deps.sessions.touchReservation(conn.sessionId, deps.state.holderOf(user));
   const snapshot = entry.session.snapshot();
 
   switch (req.function) {
+    case HF.RESERVE:
+      return reserve(deps, entry, user);
+    case HF.RELEASE:
+      return release(deps, entry, user);
     case HF.SEND_KEY:
       return sendKey(deps, entry, conn, req, user);
     case HF.WAIT:
@@ -208,11 +230,19 @@ function connect(
   req: HllapiRequest,
   user?: AuthUser
 ): HllapiResponse {
-  const name = (reqText(req)[0] ?? "").toUpperCase();
+  // **`"A"` は標準どおり。`"A <指定>"` は ts5250 の拡張**——1 文字しか渡さない
+  // 既存資産はそのまま動き、狙ったセッションを指したいときだけ後ろに足す
+  //
+  // **最初の NUL で切る。** 呼び出し側は固定長のバッファを渡してくるのが普通で
+  // （VBA の `String * 64` や C の `char[64]`）、余りは NUL のまま届く。
+  // `trim()` は NUL を落とさないので、これが無いと名前が `検証\0\0…` になって当たらない
+  const raw = reqText(req).split("\0")[0]!.trim();
+  const name = (raw[0] ?? "").toUpperCase();
   if (!/^[A-Z]$/u.test(name)) return { rc: HRC.PARAMETER_ERROR };
+  const spec = raw.slice(1).trim();
 
   const existing = conns.get(name);
-  if (existing) {
+  if (existing && spec === "") {
     try {
       deps.sessions.get(existing.sessionId, user);
       return ok();
@@ -224,9 +254,23 @@ function connect(
   // **開いているセッションを古い順に `A` から割り当てる**（対応表はここが持つ）
   const open = deps.sessions.list(user).sort((a, b) => a.connectedAt.localeCompare(b.connectedAt));
   const taken = new Set([...conns.values()].map((c) => c.sessionId));
-  const slot = name.charCodeAt(0) - 65;
-  const free = open.filter((e) => !taken.has(e.id));
-  const target = open[slot] && !taken.has(open[slot]!.id) ? open[slot] : free[0];
+
+  let target: SessionEntry | undefined;
+  if (spec !== "") {
+    // **指定されたら、当たらなければ諦める。** 黙って別のセッションへ繋ぐと、
+    // 自動化が意図しない画面を操作する（別システムの本番かもしれない）
+    const hits = open.filter((e) => matchesTarget(e, spec));
+    if (hits.length === 0) return { rc: HRC.PS_ID_INVALID };
+    // **曖昧なら断る**（同じ名前のセッションが 2 つ開いている等）
+    if (hits.length > 1) return { rc: HRC.RESOURCE_UNAVAILABLE };
+    target = hits[0];
+    // 既に別の短縮名に束ねられているなら、そちらを解いてから貼り替える
+    for (const [k, v] of [...conns]) if (v.sessionId === target!.id && k !== name) conns.delete(k);
+  } else {
+    const slot = name.charCodeAt(0) - 65;
+    const free = open.filter((e) => !taken.has(e.id));
+    target = open[slot] && !taken.has(open[slot]!.id) ? open[slot] : free[0];
+  }
   if (!target) return { rc: HRC.PS_ID_INVALID };
 
   const snapshot = target.session.snapshot();
@@ -235,22 +279,90 @@ function connect(
   return ok();
 }
 
-/** Disconnect (2)。**セッションは閉じない**（HLLAPI の意味に合わせる） */
-function disconnect(conns: Map<PsName, Connection>, req: HllapiRequest): HllapiResponse {
+/**
+ * Disconnect (2)。**セッションは閉じない**（HLLAPI の意味に合わせる）。
+ *
+ * ただし**予約は外す**——外さないと、自動化が正しく終了したのに
+ * 期限が切れるまで人間が締め出されたままになる。
+ */
+function disconnect(
+  deps: HllapiDeps,
+  conns: Map<PsName, Connection>,
+  req: HllapiRequest,
+  user?: AuthUser
+): HllapiResponse {
   const name = (reqText(req)[0] ?? "").toUpperCase();
-  if (name && conns.delete(name)) return ok();
+  const drop = (key: PsName): HllapiResponse => {
+    const conn = conns.get(key);
+    conns.delete(key);
+    if (conn) deps.sessions.release(conn.sessionId, deps.state.holderOf(user));
+    return ok();
+  };
+  if (name && conns.has(name)) return drop(name);
   // 短縮名を指定しない実装もある。1 つだけなら外す
   const first = [...conns.keys()][0];
-  if (first !== undefined) {
-    conns.delete(first);
-    return ok();
-  }
+  if (first !== undefined) return drop(first);
   return { rc: HRC.PROCEDURE_ERROR };
+}
+
+/**
+ * Reserve (11)。**自動操作の間、人間の入力を締め出す。**
+ *
+ * これが無いと、利用者がブラウザで打ちかけている最中に画面が変わり、
+ * 打ちかけが別の画面の欄へ送られる（5250 は欄の値を AID と一緒に送るため）。
+ *
+ * 既に**別の主体**が予約していれば `rc=11`（資源が使えない）。
+ * 同じ主体の再予約は期限の延長として通る。
+ */
+function reserve(deps: HllapiDeps, entry: SessionEntry, user?: AuthUser): HllapiResponse {
+  try {
+    deps.sessions.reserve(entry.id, deps.state.holderOf(user), HLLAPI_RESERVATION_LABEL, user);
+    return ok();
+  } catch (e) {
+    if (e instanceof As400Error && e.code === "SESSION_RESERVED") {
+      return { rc: HRC.RESOURCE_UNAVAILABLE };
+    }
+    // 閲覧専用のセッションは予約しても書けないので、断る意味を変えない
+    return { rc: HRC.FUNCTION_INHIBITED };
+  }
+}
+
+/** Release (12)。予約を外す。**持っていなくても成功**（HLLAPI の慣行に合わせる） */
+function release(deps: HllapiDeps, entry: SessionEntry, user?: AuthUser): HllapiResponse {
+  deps.sessions.release(entry.id, deps.state.holderOf(user));
+  return ok();
 }
 
 // ---- 問い合わせ ----
 
-/** Query Sessions (10)。短縮名・ホスト・画面サイズを 1 行ずつ */
+/**
+ * セッションが指定に当たるか。**大文字小文字は無視する**（VBA から書く名前なので）。
+ *
+ * 当てられるもの:
+ *
+ * - 実行中のセッション id（起動のたびに変わる。`Query Sessions` で見える）
+ * - セッション設定の参照（`srv:<id>` / `own:<id>`）
+ * - **設定上の名前**（利用者が付けた名前。これが一番書きやすい）
+ * - `<システム参照>/<名前>`（名前が複数のシステムで重なるとき）
+ */
+export function matchesTarget(entry: SessionEntry, spec: string): boolean {
+  const want = spec.trim().toLowerCase();
+  if (want === "") return false;
+  const t = entry.target;
+  const candidates = [
+    entry.id,
+    t?.session,
+    t?.name,
+    t?.system && t.name ? `${t.system}/${t.name}` : undefined
+  ];
+  return candidates.some((c) => c !== undefined && c.toLowerCase() === want);
+}
+
+/**
+ * Query Sessions (10)。短縮名・ホスト・画面サイズを 1 行ずつ。
+ *
+ * **`Connect` に渡せる指定も出す**——これが無いと、狙ったセッションの指し方が分からない。
+ */
 function querySessions(
   deps: HllapiDeps,
   conns: Map<PsName, Connection>,
@@ -261,7 +373,8 @@ function querySessions(
     try {
       const e = deps.sessions.get(conn.sessionId, user);
       const s = e.session.snapshot();
-      lines.push(`${name} ${e.host} ${s.rows}x${s.cols}`);
+      const spec = e.target?.name ?? e.target?.session ?? e.id;
+      lines.push(`${name} ${e.host} ${s.rows}x${s.cols} ${spec}`);
     } catch {
       // 消えたセッションは一覧に出さない
     }
@@ -407,7 +520,7 @@ function writeIntoField(
   user?: AuthUser
 ): HllapiResponse {
   try {
-    deps.sessions.assertWritable(entry.id, user);
+    deps.sessions.assertWritable(entry.id, user, deps.state.holderOf(user));
   } catch {
     return { rc: HRC.FUNCTION_INHIBITED };
   }
@@ -570,7 +683,7 @@ async function sendAid(
   user?: AuthUser
 ): Promise<HllapiResponse> {
   try {
-    deps.sessions.assertKeyAllowed(entry.id, key, user);
+    deps.sessions.assertKeyAllowed(entry.id, key, user, deps.state.holderOf(user));
   } catch {
     // 読み取り専用のセッションで更新キーを送ろうとした
     return { rc: HRC.FUNCTION_INHIBITED };
