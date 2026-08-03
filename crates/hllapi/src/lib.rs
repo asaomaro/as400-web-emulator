@@ -142,10 +142,17 @@ pub(crate) unsafe fn dispatch(func: *mut c_int, data: *mut c_char, len: *mut c_i
 
 /// HLLAPI の標準エントリ（小文字）。
 ///
+/// # 呼び出し規約に `extern "system"` を使う理由
+///
+/// **32 bit の Windows では `stdcall`、それ以外では `C`** になる。
+/// WinHLLAPI と VB / VBA の `Declare` は既定が `stdcall` なので、`extern "C"`（cdecl）の
+/// ままだと **32 bit Office からの呼び出しでスタックが壊れる**。64 bit では規約が 1 つしか
+/// 無いので違いは出ず、Linux でも `C` と同じ——**どこでも正しくなる唯一の書き方**。
+///
 /// # Safety
 /// 呼び出し規約は HLLAPI の標準に従う（4 引数すべてポインタ）。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hllapi(func: *mut c_int, data: *mut c_char, len: *mut c_int, rc: *mut c_int) {
+pub unsafe extern "system" fn hllapi(func: *mut c_int, data: *mut c_char, len: *mut c_int, rc: *mut c_int) {
     unsafe { dispatch(func, data, len, rc) }
 }
 
@@ -155,7 +162,7 @@ pub unsafe extern "C" fn hllapi(func: *mut c_int, data: *mut c_char, len: *mut c
 /// `hllapi` と同じ。
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn HLLAPI(func: *mut c_int, data: *mut c_char, len: *mut c_int, rc: *mut c_int) {
+pub unsafe extern "system" fn HLLAPI(func: *mut c_int, data: *mut c_char, len: *mut c_int, rc: *mut c_int) {
     unsafe { dispatch(func, data, len, rc) }
 }
 
@@ -165,7 +172,7 @@ pub unsafe extern "C" fn HLLAPI(func: *mut c_int, data: *mut c_char, len: *mut c
 /// `hllapi` と同じ。
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
-pub unsafe extern "C" fn WinHLLAPI(func: *mut c_int, data: *mut c_char, len: *mut c_int, rc: *mut c_int) {
+pub unsafe extern "system" fn WinHLLAPI(func: *mut c_int, data: *mut c_char, len: *mut c_int, rc: *mut c_int) {
     unsafe { dispatch(func, data, len, rc) }
 }
 
@@ -174,7 +181,7 @@ pub unsafe extern "C" fn WinHLLAPI(func: *mut c_int, data: *mut c_char, len: *mu
 /// # Safety
 /// `hllapi` と同じ。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hllc(func: *mut c_int, data: *mut c_char, len: *mut c_int, rc: *mut c_int) {
+pub unsafe extern "system" fn hllc(func: *mut c_int, data: *mut c_char, len: *mut c_int, rc: *mut c_int) {
     unsafe { dispatch(func, data, len, rc) }
 }
 
