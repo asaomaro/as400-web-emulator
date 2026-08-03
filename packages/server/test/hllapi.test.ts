@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from "vitest";
 import { callHllapi, HllapiState, type HllapiDeps } from "../src/hllapi.js";
 import { HF, HRC } from "../src/hllapi-types.js";
 import { As400Error } from "@ts5250/base";
+import { setAuditSink, type AuditEvent } from "../src/audit.js";
 import type { SessionManager } from "../src/session-manager.js";
+import type { AuthUser } from "../src/auth.js";
 import { encodeCp932, decodeCp932 } from "../src/hllapi-cp932.js";
 import type { Cell, CellKind, Field, ScreenSnapshot } from "@ts5250/tn5250";
 
@@ -65,7 +67,12 @@ function snap(opts: {
 /** 偽の SessionManager。**実機に触らずに分岐だけ検証する** */
 function fakeDeps(opts: {
   snapshot?: ScreenSnapshot;
-  sessions?: { id: string; connectedAt: string; target?: { system?: string; session?: string; name?: string } }[];
+  sessions?: {
+    id: string;
+    connectedAt: string;
+    owner?: string;
+    target?: { system?: string; session?: string; name?: string };
+  }[];
   setField?: (t: unknown, v: string) => void;
   sendAid?: ReturnType<typeof vi.fn>;
   keyAllowed?: boolean;
@@ -88,6 +95,7 @@ function fakeDeps(opts: {
     connectedAt: e.connectedAt,
     host: "h",
     ...((e as { target?: unknown }).target !== undefined ? { target: (e as { target?: unknown }).target } : {}),
+    ...((e as { owner?: string }).owner !== undefined ? { owner: (e as { owner?: string }).owner } : {}),
     session: { snapshot: () => snapshot, sendAid, setField }
   }));
   const sessions = {
@@ -591,5 +599,81 @@ describe("Connect(\"A\") の割り当て", () => {
     await call(deps, HF.CONNECT_PS, vbaShape("A"));
     expect((await call(deps, HF.CONNECT_PS, vbaShape("A"))).rc).toBe(HRC.SUCCESSFUL);
     expect(await bound(deps)).toBe("A h 2x10 only");
+  });
+});
+
+/**
+ * **監査**。MCP は `withAudit` を 25 箇所、WebSocket は 12 箇所で通しているのに、
+ * HLLAPI だけ素通しだった（2026-08-04 に発覚）。
+ *
+ * ここは **管理者が他人のセッションへ届く経路**でもある——`assertOwner` は admin を通し、
+ * `list` も admin には全件返す。誰が誰のセッションを動かしたか残らないのはまずい。
+ */
+describe("監査", () => {
+  const collect = async (fn: () => Promise<unknown>): Promise<AuditEvent[]> => {
+    const events: AuditEvent[] = [];
+    setAuditSink((e) => events.push(e));
+    try {
+      await fn();
+    } finally {
+      setAuditSink(() => undefined);
+    }
+    return events;
+  };
+
+  it("**画面を変えうる操作は記録される**", async () => {
+    const { deps } = fakeDeps();
+    const events = await collect(async () => {
+      await call(deps, HF.CONNECT_PS, { data: "A" });
+      await call(deps, HF.SEND_KEY, { data: "@E" });
+    });
+    expect(events.map((e) => e.op)).toEqual([`hllapi_${HF.CONNECT_PS}`, `hllapi_${HF.SEND_KEY}`]);
+    expect(events[1]).toMatchObject({ result: "ok", sessionId: "s1" });
+  });
+
+  it("**読むだけの操作は記録しない**（画面を見ただけで監査が膨らまない）", async () => {
+    const { deps } = await connected();
+    const events = await collect(async () => {
+      await call(deps, HF.COPY_PS, { length: 20 });
+      await call(deps, HF.SEARCH_PS, { data: "X" });
+      await call(deps, HF.QUERY_CURSOR_LOCATION);
+    });
+    expect(events).toEqual([]);
+  });
+
+  it("失敗も残る（`rc` つき）", async () => {
+    const { deps } = fakeDeps({ sessions: [] });
+    const events = await collect(() => call(deps, HF.CONNECT_PS, { data: "A" }));
+    expect(events[0]).toMatchObject({ result: "error", code: `rc=${HRC.PS_ID_INVALID}` });
+  });
+
+  it("**他人のセッションを触ったことが読み取れる**（管理者の遠隔操作）", async () => {
+    const { deps } = fakeDeps({
+      sessions: [{ id: "s1", connectedAt: "2026-08-03T00:00:00Z", owner: "tanaka" }]
+    });
+    const admin = { username: "kanri", role: "admin" } as AuthUser;
+    const events = await collect(async () => {
+      await callHllapi(deps, { function: HF.CONNECT_PS, dataB64: b64("A"), length: 1, pos: 0 }, admin);
+      await callHllapi(deps, { function: HF.SEND_KEY, dataB64: b64("@E"), length: 2, pos: 0 }, admin);
+    });
+    // **所有者が載る**——自分以外のセッションを動かしたことが監査から分かる
+    expect(events.every((e) => e.key === "owner=tanaka")).toBe(true);
+  });
+
+  it("自分のセッションなら所有者は載せない（雑音にしない）", async () => {
+    const { deps } = fakeDeps({
+      sessions: [{ id: "s1", connectedAt: "2026-08-03T00:00:00Z", owner: "tanaka" }]
+    });
+    const self = { username: "tanaka", role: "user" } as AuthUser;
+    const events = await collect(() =>
+      callHllapi(deps, { function: HF.CONNECT_PS, dataB64: b64("A"), length: 1, pos: 0 }, self)
+    );
+    expect(events[0]?.key).toBeUndefined();
+  });
+
+  it("**バッファの中身は載せない**（サインオン画面への入力が通る経路）", async () => {
+    const { deps } = await connected();
+    const events = await collect(() => call(deps, HF.SEND_KEY, { data: "HIMITSU@E" }));
+    expect(JSON.stringify(events)).not.toContain("HIMITSU");
   });
 });

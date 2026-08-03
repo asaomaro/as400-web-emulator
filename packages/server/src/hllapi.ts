@@ -20,6 +20,7 @@
  * 「成功したのに何も起きない」にはならない。10 は規約にある値（research F3）。
  */
 import { As400Error } from "@ts5250/base";
+import { audit } from "./audit.js";
 import type { Field, ScreenSnapshot } from "@ts5250/tn5250";
 import type { AuthUser } from "./auth.js";
 import type { SessionEntry, SessionManager } from "./session-manager.js";
@@ -132,6 +133,58 @@ export async function callHllapi(
   user?: AuthUser
 ): Promise<HllapiResponse> {
   const conns = deps.state.connections(user);
+  const res = await dispatch(deps, conns, req, user);
+  auditIfWrite(deps, conns, req, res, user);
+  return res;
+}
+
+/**
+ * 画面を変えうる操作を**監査に載せる**。
+ *
+ * MCP は `withAudit` を 25 箇所、WebSocket は 12 箇所で通しているのに、
+ * ここだけ素通しだった。**HLLAPI は管理者が他人のセッションへ届く経路**でもあるので
+ * （`assertOwner` は admin を通し、`list` も admin には全件返す）、
+ * 誰が誰のセッションを動かしたか残らないのはまずい。
+ *
+ * **バッファの中身は載せない**（サインオン画面への入力が通る）。
+ * 載せるのは機能番号・`rc`・対象セッションと**その所有者**——
+ * 所有者を出すのは、**自分以外のセッションを触ったこと**が読み取れるようにするため。
+ */
+const WRITES = new Set<number>([HF.CONNECT_PS, HF.SEND_KEY, HF.COPY_STRING_TO_PS, HF.COPY_STRING_TO_FIELD, HF.RESERVE, HF.RELEASE]);
+
+function auditIfWrite(
+  deps: HllapiDeps,
+  conns: Map<PsName, Connection>,
+  req: HllapiRequest,
+  res: HllapiResponse,
+  user?: AuthUser
+): void {
+  if (!WRITES.has(req.function)) return;
+  const sessionId = [...conns.values()][0]?.sessionId;
+  let owner: string | undefined;
+  if (sessionId !== undefined) {
+    try {
+      owner = deps.sessions.get(sessionId, user).owner;
+    } catch {
+      // 消えていれば所有者は出せない。監査そのものは残す
+    }
+  }
+  audit({
+    op: `hllapi_${req.function}`,
+    ...(sessionId !== undefined ? { sessionId } : {}),
+    // **自分以外のセッションを触ったことが読み取れるように**、対象の所有者を key に載せる
+    ...(owner !== undefined && owner !== user?.username ? { key: `owner=${owner}` } : {}),
+    result: res.rc === HRC.SUCCESSFUL ? "ok" : "error",
+    ...(res.rc === HRC.SUCCESSFUL ? {} : { code: `rc=${res.rc}` })
+  });
+}
+
+async function dispatch(
+  deps: HllapiDeps,
+  conns: Map<PsName, Connection>,
+  req: HllapiRequest,
+  user?: AuthUser
+): Promise<HllapiResponse> {
 
   switch (req.function) {
     case HF.CONNECT_PS:
