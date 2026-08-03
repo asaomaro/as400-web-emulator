@@ -19,7 +19,7 @@ node --env-file=.env scripts/<name>.mjs
 | 機械 | 版数 | パスワードレベル | 備考 |
 |---|---|---|---|
 | **SR-OSAKA**（社内・LAN） | **IBM i 7.3**（`V7R3M0`） | **0**（DES 経路） | CCSID 5035 / SBCS は 5026 系。ライブラリ `ASAOLIB` |
-| **PUB400**（インターネット・TLS） | IBM i 7.5（`V7R5M0`） | 3（SHA 経路） | ライブラリ `MARO1`。1 往復 4〜7 秒 |
+| **PUB400**（インターネット・TLS） | **IBM i 7.5**（`V7R5M0`。2026-08-02 に実測） | **3**（SHA 経路。同日実測） | ライブラリ `MARO1`。1 往復 4〜7 秒。**特殊権限なし** |
 
 > ⚠ **2026-08-01 より前の記録は SR-OSAKA を「IBM i 7.5」と書いているが誤り。**
 > `.aidev/works/*` の research / walkthrough 等 15 件超が該当する（過去の記録なので
@@ -437,3 +437,31 @@ TARGET=<実機IP> LOG=./tap.log node scripts/tap-proxy.mjs
 > 見るのは件数だけでなく**受信時刻**——`閉じた < 受信 < 開き直し` が成り立つかを確かめる。
 > 開いた時刻で押していると、この不等式が両側とも崩れる。
 > 資格情報は `passwordEnv` で env のまま渡し、設定オブジェクトに平文を置かない。
+
+## SQL 実行計画（Visual Explain 相当）
+
+`20260802-sql-visual-explain`。**自ジョブの DB モニター**（`STRDBMON JOB(*)`）で計画を採る。
+**特権は要らない**——PUB400 の特殊権限なしユーザーで通ることを実測した。
+一方**プランキャッシュの一覧は特権が要る**（無ければ `SQLCODE -443 / SQLSTATE 38501`）。
+
+| スクリプト | 内容 |
+|---|---|
+| `research-visual-explain-osaka{,2,3,4,5}.mjs` | 調査（サービスの有無・引数・記録の形・`explain only` の可否・`PROCESS_DETAILED_MONITOR` の探索） |
+| `research-visual-explain-pub400.mjs` | 7.5・非特権での挙動（版数と権限の差を切り分ける） |
+| `research-visual-explain-compare.mjs` | **同一 SQL** で 7.3 / 7.5 を突き合わせる（`osaka` / `pub400` を引数で切替） |
+| `research-visual-explain-shapes.mjs` | 結合・集約・副問合せ・UNION で出る記録種別と階層列（`QQQDTN` / `QQQDTL`） |
+| `verify-visual-explain-osaka.mjs` | 採取の疎通（hostserver の関数を直接。`pub400` 引数あり） |
+| `verify-visual-explain-e2e.mjs` | **REST 経由の統合検証**（`buildApp` を通す。`pub400` 引数あり） |
+
+```sh
+node --env-file=.env scripts/verify-visual-explain-e2e.mjs          # SR-OSAKA (7.3・全特権)
+node --env-file=.env scripts/verify-visual-explain-e2e.mjs pub400   # PUB400 (7.5・特権なし)
+```
+
+実測で分かった落とし穴（コードのコメントにも残してある）:
+
+- **`explain only`（文を実行せずに計画だけ）は実現できない。** prepare だけでは最適化記録が 0 件で、
+  最適化は `open` の時点で起きる。提供しているのは「行を返さない」モードで、**文はホストで実行される**。
+- **同じ接続で同じ文を 2 回完全オープンすると、3 回目以降は最適化記録が出ない**
+  （ODP の再利用）。`host-plan.ts` は新しい接続で 1 度だけやり直して回復する。
+- **`3006` / `3015` は 7.5 だけに出る**（同一 SQL で突き合わせて確認）。未対応種別として素通しする。
