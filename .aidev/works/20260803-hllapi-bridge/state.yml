@@ -1,7 +1,7 @@
 schema: 3
 slug: hllapi-bridge
 current: walkthrough
-approved: [requirement, research, spec, plan, test, review, walkthrough]
+approved: [requirement, research, spec, plan, coding, test, review, walkthrough]
 mode: autonomous
 humanGates: []
 maxSendBacks: 3

@@ -14,3 +14,14 @@ events:
   - { ts: 2026-08-03T10:09:00Z, phase: walkthrough, event: start }
   - { ts: 2026-08-03T10:09:00Z, phase: walkthrough, event: approved }
   - { ts: 2026-08-03T10:09:14Z, phase: deliver, event: start }
+  - { ts: 2026-08-03T10:15:22Z, phase: deliver, event: approved, metrics: { pr: #296 } }
+  - { ts: 2026-08-03T11:17:57Z, phase: deliver, event: sent_back, metrics: { reason: Reserve/Release 未実装のため二重書き込みを防げない } }
+  - { ts: 2026-08-03T11:17:57Z, phase: coding, event: start }
+  - { ts: 2026-08-03T11:55:18Z, phase: coding, event: approved, metrics: { tasks_done: 6 } }
+  - { ts: 2026-08-03T11:55:18Z, phase: test, event: start }
+  - { ts: 2026-08-03T11:55:53Z, phase: test, event: approved, metrics: { passed: 3883, failed: 0 } }
+  - { ts: 2026-08-03T11:56:27Z, phase: review, event: start }
+  - { ts: 2026-08-03T11:56:27Z, phase: review, event: approved, metrics: { must: 0, should: 0, nit: 0 } }
+  - { ts: 2026-08-03T11:56:57Z, phase: walkthrough, event: start }
+  - { ts: 2026-08-03T11:56:57Z, phase: walkthrough, event: approved }
+  - { ts: 2026-08-03T11:57:07Z, phase: deliver, event: start }
