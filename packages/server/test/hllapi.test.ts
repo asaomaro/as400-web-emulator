@@ -85,8 +85,11 @@ function fakeDeps(opts: {
   setField: ReturnType<typeof vi.fn>;
   /** いま予約している主体（`undefined` なら空き） */
   holder: () => string | undefined;
+  /** いま予約に付いている表示名（画面に出るもの） */
+  label: () => string | undefined;
 } {
   let holder: string | undefined = opts.reservedBy;
+  let label: string | undefined;
   const snapshot = opts.snapshot ?? snap({});
   const sendAid = opts.sendAid ?? vi.fn(async () => ({ screen: snapshot, timedOut: false }));
   const setField = vi.fn(opts.setField ?? (() => undefined));
@@ -113,25 +116,31 @@ function fakeDeps(opts: {
     },
     // 予約は**本物と同じ意味**で動かす（HLLAPI 側の分岐を意味のある形で検査するため）。
     // 実装そのものの検査は `session-manager.test.ts`
-    reserve: (_id: string, h: string) => {
+    reserve: (_id: string, h: string, lab: string) => {
       // 本物は assertWritable を通す（閲覧専用は予約できない）
       if (opts.writable === false) throw new As400Error("READ_ONLY_SESSION", "read only");
       if (holder !== undefined && holder !== h) {
         throw new As400Error("SESSION_RESERVED", "reserved");
       }
       holder = h;
+      label = lab;
     },
     release: (_id: string, h: string) => {
-      if (holder === h) holder = undefined;
+      if (holder === h) {
+        holder = undefined;
+        label = undefined;
+      }
     },
     touchReservation: () => undefined,
-    reservationOf: () => (holder === undefined ? undefined : { holder, label: "HLLAPI", expiresAt: 0 })
+    reservationOf: () =>
+      holder === undefined ? undefined : { holder, label: label ?? "HLLAPI", expiresAt: 0 }
   } as unknown as SessionManager;
   return {
     deps: { sessions, state: new HllapiState(), sleep: async () => undefined },
     sendAid,
     setField,
-    holder: () => holder
+    holder: () => holder,
+    label: () => label
   };
 }
 
@@ -741,5 +750,41 @@ describe("既定は自分のセッションに限る（管理者の誤操作を�
   it("認証オフも影響を受けない（`user` も `owner` も undefined で一致する）", async () => {
     const { deps } = fakeDeps({ sessions: [{ id: "only", connectedAt: "2026-08-03T00:00:00Z" }] });
     expect((await conn(deps, "A")).rc).toBe(HRC.SUCCESSFUL);
+  });
+});
+
+/**
+ * **触られた側に「誰が操作しているか」を出す。**
+ *
+ * 管理者は他人のセッションへ届く。支援としては正当だが、
+ * 「HLLAPI が自動操作中です」としか出ないのは不親切で、無断操作の抑止にもならない。
+ */
+describe("予約の表示名", () => {
+  const owned = (owner: string) => ({
+    sessions: [{ id: "s1", connectedAt: "2026-08-03T00:00:00Z", owner, target: { name: "画面" } }]
+  });
+
+  it("**他人のセッションなら操作者の名前が出る**", async () => {
+    const f = fakeDeps(owned("tanaka"));
+    const admin = { username: "kanri", role: "admin" } as AuthUser;
+    const spec = "A 画面";
+    await callHllapi(f.deps, { function: HF.CONNECT_PS, dataB64: b64(spec), length: spec.length, pos: 0 }, admin);
+    await callHllapi(f.deps, { function: HF.RESERVE, dataB64: "", length: 8, pos: 0 }, admin);
+    // 画面には `msgReserved(label)` ＝「… が自動操作中です」として出る
+    expect(f.label()).toBe("kanri（HLLAPI）");
+  });
+
+  it("自分のセッションなら仕組みの名前だけ（自分に自分の名前を出しても情報が無い）", async () => {
+    const f = fakeDeps(owned("tanaka"));
+    const self = { username: "tanaka", role: "user" } as AuthUser;
+    await callHllapi(f.deps, { function: HF.CONNECT_PS, dataB64: b64("A"), length: 1, pos: 0 }, self);
+    await callHllapi(f.deps, { function: HF.RESERVE, dataB64: "", length: 8, pos: 0 }, self);
+    expect(f.label()).toBe("HLLAPI");
+  });
+
+  it("認証オフでも仕組みの名前だけ", async () => {
+    const f = await connected();
+    await call(f.deps, HF.RESERVE, { length: 8 });
+    expect(f.label()).toBe("HLLAPI");
   });
 });

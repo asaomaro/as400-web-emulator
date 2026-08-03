@@ -90,6 +90,20 @@ export class HllapiState {
 /** 予約中であることを利用者に見せる名前 */
 export const HLLAPI_RESERVATION_LABEL = "HLLAPI";
 
+/**
+ * 画面に出す「誰が操作しているか」。
+ *
+ * **自分以外のセッションを触るときは、操作している人の名前を出す。**
+ * 管理者は他人のセッションへ届く（`assertOwner` が admin を通す）。支援としては正当だが、
+ * **触られた側に「HLLAPI が自動操作中です」としか出ないのは不親切で、無断操作の抑止にもならない**。
+ *
+ * 自分のセッションなら仕組みの名前だけ——自分の操作に自分の名前を出しても情報が無い。
+ */
+export function reservationLabel(entry: SessionEntry, user?: AuthUser): string {
+  const crossUser = user !== undefined && entry.owner !== undefined && entry.owner !== user.username;
+  return crossUser ? `${user.username}（${HLLAPI_RESERVATION_LABEL}）` : HLLAPI_RESERVATION_LABEL;
+}
+
 export interface HllapiDeps {
   sessions: SessionManager;
   state: HllapiState;
@@ -379,7 +393,7 @@ function disconnect(
  */
 function reserve(deps: HllapiDeps, entry: SessionEntry, user?: AuthUser): HllapiResponse {
   try {
-    deps.sessions.reserve(entry.id, deps.state.holderOf(user), HLLAPI_RESERVATION_LABEL, user);
+    deps.sessions.reserve(entry.id, deps.state.holderOf(user), reservationLabel(entry, user), user);
     return ok();
   } catch (e) {
     if (e instanceof As400Error && e.code === "SESSION_RESERVED") {
