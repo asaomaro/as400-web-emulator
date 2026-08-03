@@ -465,3 +465,20 @@ node --env-file=.env scripts/verify-visual-explain-e2e.mjs pub400   # PUB400 (7.
 - **同じ接続で同じ文を 2 回完全オープンすると、3 回目以降は最適化記録が出ない**
   （ODP の再利用）。`host-plan.ts` は新しい接続で 1 度だけやり直して回復する。
 - **`3006` / `3015` は 7.5 だけに出る**（同一 SQL で突き合わせて確認）。未対応種別として素通しする。
+
+### 記録種別・MCP・実ブラウザの検証
+
+| スクリプト | 内容 |
+|---|---|
+| `research-visual-explain-records.mjs` | **記録種別ごとにどの列が埋まるか**を実測（形の違う SQL を 9 通り。`SELECT *` で 282 列）。名前を与える根拠を採る |
+| `verify-visual-explain-mcp.mjs` | MCP ツール 2 本を実クライアントから叩く（`pub400` 引数あり） |
+| `verify-browser-visual-explain.mjs` | 実ブラウザ（Playwright）で計画の描画・一覧ペイン・保存を確認。スクリーンショット 8 枚 |
+
+**記録種別に名前を与える基準**: IBM Documentation の "Database monitor view NNNN - …" と
+**こちらの実測が一致したものだけ**。`5002` / `5005` / `3018` は観測したが文書化された名称を
+確認できていないので `other`（「記録 nnnn」＋属性）のまま。
+
+⚠ **MCP でエラーを返すときに `structuredContent` を載せてはならない。**
+SDK は `isError` に関わらず `outputSchema` で検証するので、エラーの形（`{error:…}`）を載せると
+**クライアント側が例外を投げて呼び出しごと失敗する**。`listTools()` を呼んだクライアントでだけ
+起きるため気づきにくい（`mcp-tools.ts` の `errorResult` の注記）。

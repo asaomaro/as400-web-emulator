@@ -112,15 +112,26 @@ async function main() {
   check("助言: CREATE INDEX 文まで組み立てている", advice.length === 0 || Boolean(advice[0]?.createStatement),
     advice[0]?.createStatement ?? "(助言なし)");
 
-  // --- 5. 未対応の記録種別（版数差の可視化） ---
-  const unknown = runPlan?.unknownRecordTypes ?? [];
-  check("版数差: unknownRecordTypes を返す", Array.isArray(unknown), `[${unknown.join(", ")}]`);
+  // --- 5. 記録種別の命名と版数差 ---
+  const nodes = (runPlan?.blocks ?? []).flatMap((b) => b.nodes ?? []);
+  const kinds = [...new Set(nodes.map((n) => n.kind))];
+  check("命名: 表の走査が種別として出る", kinds.includes("table-scan"), `kinds=${kinds.join(", ")}`);
+  check("命名: 索引の使用が種別として出る", kinds.includes("index-used"), `kinds=${kinds.join(", ")}`);
+  check(
+    "命名: **ステップと付帯情報が分かれている**",
+    nodes.some((n) => n.category === "step") && nodes.some((n) => n.category === "info"),
+    `step=${runPlan?.summary?.stepCount} / 計=${runPlan?.summary?.nodeCount}`
+  );
+  // 7.5 だけに出る 3015（Statistics Information）はノードとして見える
+  const hasStats = nodes.some((n) => n.recordType === 3015);
   if (which === "pub400") {
-    check("版数差: **7.5 だけの 3015 が載る**", unknown.includes(3015), `[${unknown.join(", ")}]`);
+    check("版数差: **7.5 だけの統計情報(3015)がノードとして出る**", hasStats, `kinds=${kinds.join(", ")}`);
   } else {
-    check("版数差: 7.3 に 3015 は出ない", !unknown.includes(3015), `[${unknown.join(", ")}]`);
+    check("版数差: 7.3 に 3015 は出ない", !hasStats, `kinds=${kinds.join(", ")}`);
   }
-  check("版数差: 意図して使う 1000 / 3019 は数えない", !unknown.includes(1000) && !unknown.includes(3019));
+  const unknown = runPlan?.unknownRecordTypes ?? [];
+  check("未対応種別: 名前を付けたものは数えない", !unknown.includes(3015) && !unknown.includes(3000), `[${unknown.join(", ")}]`);
+  check("未対応種別: 意図して使う 1000 / 3019 も数えない", !unknown.includes(1000) && !unknown.includes(3019));
 
   // --- 6. プランキャッシュ一覧（特権で分かれる） ---
   const list = await get(`/api/host/plans?system=${encodeURIComponent(SOURCE.system)}&topN=5`);
