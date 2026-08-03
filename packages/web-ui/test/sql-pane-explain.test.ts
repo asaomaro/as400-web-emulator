@@ -38,16 +38,17 @@ const PLAN = {
       nodes: [
         {
           id: "1-0",
-          kind: "table-access",
+          kind: "table-scan",
+          category: "step",
           recordType: 3000,
-          label: "表アクセス: SYSDUMMY1",
+          label: "表の走査: SYSDUMMY1",
           attributes: [{ label: "記録種別", value: "3000" }]
         }
       ]
     }
   ],
   advice: [],
-  summary: { nodeCount: 1, blockCount: 1, tables: ["SYSIBM.SYSDUMMY1"], indexes: [], adviceCount: 0 },
+  summary: { nodeCount: 1, stepCount: 1, blockCount: 1, tables: ["SYSIBM.SYSDUMMY1"], indexes: [], adviceCount: 0 },
   unknownRecordTypes: []
 };
 
@@ -131,6 +132,20 @@ describe("計画の取得", () => {
     w.unmount();
   });
 
+  it("**source はオブジェクトで送る**（文字列だとサーバーが 400 を返す）", async () => {
+    // 実ブラウザ検証で `Invalid input: expected object, received string` を踏んだ。
+    // 偽 fetch は body を捕まえていたのに**形を検証していなかった**ので気づけなかった
+    const { calls } = mockExplain({ plan: PLAN });
+    const w = mount(SqlPane, { props: { tabId: "sql:query", system: SYSTEM.ref } });
+    await w.find("textarea").setValue("SELECT 1");
+    await planButton(w, MSG_PLAN_MODE_RUN)!.trigger("click");
+    await flushPromises();
+
+    const call = calls.find((c) => c.url === "/api/host/sql/explain");
+    expect(call?.body["source"]).toEqual({ system: SYSTEM.ref });
+    w.unmount();
+  });
+
   it("**複数文なら先頭の 1 文だけ**を対象にする（どれの計画か曖昧にしない）", async () => {
     const { calls } = mockExplain({ plan: PLAN });
     const w = mount(SqlPane, { props: { tabId: "sql:query", system: SYSTEM.ref } });
@@ -151,7 +166,7 @@ describe("計画の取得", () => {
     await flushPromises();
 
     expect(w.find(".plan-panel").exists()).toBe(true);
-    expect(w.text()).toContain("表アクセス: SYSDUMMY1");
+    expect(w.text()).toContain("表の走査: SYSDUMMY1");
     // 結果領域は残っている
     expect(w.find(".results").exists()).toBe(true);
     w.unmount();

@@ -10,7 +10,7 @@ import { csvBlob, csvFileName, toCsv } from "../csv.js";
 import type { LobPlaceholder } from "@ts5250/hostserver";
 import { splitSqlStatements, summarizeSql } from "@ts5250/base";
 import PlanViewer from "./PlanViewer.vue";
-import { explainSql, type CaptureMode, type IndexAdvice, type QueryPlan } from "../planApi.js";
+import { explainSql, runSql, type CaptureMode, type IndexAdvice, type QueryPlan } from "../planApi.js";
 import { pushHistory } from "../planStore.js";
 import {
   MSG_PLAN_MODE_RUN,
@@ -188,13 +188,8 @@ async function explain(mode: CaptureMode): Promise<void> {
  * SQL 欄に同じ文を打てば通るので新しい権限を増やさず、監査もそのまま乗る。
  */
 async function createIndex(advice: IndexAdvice): Promise<void> {
-  const res = await fetch("/api/host/sql", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ source: props.system, sql: advice.createStatement })
-  });
-  const data = (await res.json()) as { error?: string };
-  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  if (!props.system) return;
+  await runSql({ source: props.system, sql: advice.createStatement });
 }
 
 /**

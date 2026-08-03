@@ -49,8 +49,16 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   return data;
 }
 
+/**
+ * 計画を採る。
+ *
+ * **`source` はシステム参照の文字列で受け、`{ system }` に包んで送る。**
+ * サーバーの `sourceSchema` はオブジェクト（`{ system?, session? }`）で、
+ * 文字列のまま送ると `Invalid input: expected object, received string` で 400 になる
+ * ——実ブラウザ検証で踏んだ（単体テストは `fetch` を偽装していたので形が検証されていなかった）。
+ */
 export async function explainSql(args: {
-  source: unknown;
+  source: string;
   sql: string;
   mode: CaptureMode;
   maxRows?: number;
@@ -58,9 +66,27 @@ export async function explainSql(args: {
   const res = await fetch("/api/host/sql/explain", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(args)
+    body: JSON.stringify({
+      source: { system: args.source },
+      sql: args.sql,
+      mode: args.mode,
+      ...(args.maxRows !== undefined ? { maxRows: args.maxRows } : {})
+    })
   });
   return jsonOrThrow<ExplainResponse>(res);
+}
+
+/**
+ * 助言の索引を作る。**専用の入口を作らず既存の SQL 経路へ送る**——
+ * SQL 欄に同じ文を打てば通るので新しい権限を増やさず、監査もそのまま乗る。
+ */
+export async function runSql(args: { source: string; sql: string }): Promise<void> {
+  const res = await fetch("/api/host/sql", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source: { system: args.source }, sql: args.sql })
+  });
+  await jsonOrThrow<unknown>(res);
 }
 
 /**
