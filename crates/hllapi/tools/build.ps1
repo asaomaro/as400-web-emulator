@@ -3,7 +3,7 @@
   HLLAPI の DLL を Windows 上でビルドする（MSVC）。
 
 .DESCRIPTION
-  Linux から作りたい場合は scripts/build-hllapi.sh --windows を使う（mingw 版が出る）。
+  Linux から作りたい場合は crates/hllapi/tools/build.sh --windows を使う（mingw 版が出る）。
   こちらは Windows 上で MSVC ツールチェーンを使う場合。
 
   **Office と同じビット数の DLL を使うこと。** 64bit Office なら x64、
@@ -21,8 +21,8 @@
   出来た DLL をここへ複写する（例 C:\ts5250）
 
 .EXAMPLE
-  pwsh -File scripts\build-hllapi.ps1
-  pwsh -File scripts\build-hllapi.ps1 -Arch x86 -Install C:\ts5250
+  pwsh -File crates\hllapi\tools\build.ps1
+  pwsh -File crates\hllapi\tools\build.ps1 -Arch x86 -Install C:\ts5250
 #>
 [CmdletBinding()]
 param(
@@ -32,8 +32,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$crate = Join-Path $PSScriptRoot "..\crates\hllapi"
-$checker = Join-Path $PSScriptRoot "check-hllapi-dll.py"
+$crate = Join-Path $PSScriptRoot ".."
+$checker = Join-Path $PSScriptRoot "check-dll.py"
 
 function Say([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
 
@@ -59,7 +59,7 @@ foreach ($t in $targets) {
     throw @"
 ビルドに失敗しました。MSVC のリンカが要ります。
 Visual Studio Build Tools の「C++ によるデスクトップ開発」を入れるか、
-Linux から scripts/build-hllapi.sh --windows で mingw 版を作ってください。
+Linux から crates/hllapi/tools/build.sh --windows で mingw 版を作ってください。
 "@
   }
   $outputs += (Join-Path $crate "target\$t\release\ts5250hllapi.dll")
@@ -71,7 +71,7 @@ if (Get-Command python -ErrorAction SilentlyContinue) {
   python $checker @outputs
   if ($LASTEXITCODE -ne 0) { throw "検査に失敗しました" }
 } else {
-  Write-Warning "python が無いので検査を飛ばします（scripts\check-hllapi-dll.py）"
+  Write-Warning "python が無いので検査を飛ばします（crates\hllapi\tools\check-dll.py）"
 }
 
 if ($Install) {

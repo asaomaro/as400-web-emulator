@@ -2,10 +2,10 @@
 #
 # HLLAPI 共有ライブラリをビルドする（Linux / macOS から。Windows 版も作れる）。
 #
-#   scripts/build-hllapi.sh                # そのホスト向け（.so / .dylib）
-#   scripts/build-hllapi.sh --windows      # Windows 版 64bit ＋ 32bit も
-#   scripts/build-hllapi.sh --windows-only
-#   scripts/build-hllapi.sh --check-only   # ビルド済みのものを検査するだけ
+#   crates/hllapi/tools/build.sh                # そのホスト向け（.so / .dylib）
+#   crates/hllapi/tools/build.sh --windows      # Windows 版 64bit ＋ 32bit も
+#   crates/hllapi/tools/build.sh --windows-only
+#   crates/hllapi/tools/build.sh --check-only   # ビルド済みのものを検査するだけ
 #
 # ## このスクリプトが要る理由
 #
@@ -21,9 +21,9 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-crate="$here/../crates/hllapi"
+crate="$here/.."
 cache="${TS5250_BUILD_CACHE:-${TMPDIR:-/tmp}/ts5250-hllapi-build}"
-checker="$here/check-hllapi-dll.py"
+checker="$here/check-dll.py"
 
 want_native=1
 want_windows=0

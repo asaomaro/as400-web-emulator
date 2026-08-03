@@ -13,15 +13,15 @@
   **生成のときだけ必要**な設定なので、作り終えたら戻してよい。
 
 .EXAMPLE
-  pwsh -File scripts\make-hllapi-xlsm.ps1
-  pwsh -File scripts\make-hllapi-xlsm.ps1 -Out C:\work\ts5250.xlsm -DllPath C:\ts5250\ts5250hllapi.dll
+  pwsh -File crates\hllapi\tools\make-xlsm.ps1
+  pwsh -File crates\hllapi\tools\make-xlsm.ps1 -Out C:\work\ts5250.xlsm -DllPath C:\ts5250\ts5250hllapi.dll
 #>
 [CmdletBinding()]
 param(
   # 出力先の .xlsm
   [string]$Out = (Join-Path (Get-Location) "ts5250-hllapi.xlsm"),
   # 取り込む VBA モジュール
-  [string]$Bas = (Join-Path $PSScriptRoot "..\docs\hllapi-sample.bas"),
+  [string]$Bas = (Join-Path $PSScriptRoot "..\..\..\docs\hllapi-sample.bas"),
   # DLL の置き場所（.bas の中の宣言をここへ書き換える）
   [string]$DllPath = "C:\ts5250\ts5250hllapi.dll"
 )

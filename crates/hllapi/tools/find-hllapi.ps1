@@ -16,8 +16,8 @@
   外部ツールを使わない（PE を自前で読む）。管理者権限も要らない。
 
 .EXAMPLE
-  pwsh -File scripts\find-hllapi.ps1
-  pwsh -File scripts\find-hllapi.ps1 -Path "C:\Program Files (x86)\IBM"
+  pwsh -File crates\hllapi\tools\find-hllapi.ps1
+  pwsh -File crates\hllapi\tools\find-hllapi.ps1 -Path "C:\Program Files (x86)\IBM"
 #>
 [CmdletBinding()]
 param(

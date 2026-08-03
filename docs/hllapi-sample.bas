@@ -3,7 +3,7 @@ Attribute VB_Name = "Ts5250Hllapi"
 ' ts5250 HLLAPI サンプル（Excel VBA / VB6）
 '
 ' VBE で 「ファイル」→「ファイルのインポート」からこのファイルを読み込む。
-' あるいは scripts\make-hllapi-xlsm.ps1 が組み込んだ .xlsm を使う。
+' あるいは crates\hllapi\tools\make-xlsm.ps1 が組み込んだ .xlsm を使う。
 '
 ' ■ 事前に必要なもの
 '   1. ts5250 サーバーが動いていること
@@ -20,7 +20,7 @@ Attribute VB_Name = "Ts5250Hllapi"
 '   下の Declare の Lib を相手の DLL 名に変えれば、**同じコードが動く**。
 '     PCOMM              → "pcshll32.dll"（または "ehlapi32.dll"）
 '     iSeries Access(旧) → PC5250 の EHLLAPI
-'   どれが入っているかは scripts\find-hllapi.ps1 が実際に調べる（記憶で決めない）。
+'   どれが入っているかは crates\hllapi\tools\find-hllapi.ps1 が実際に調べる（記憶で決めない）。
 '   ACS 本体（Java 版）は HLLAPI を持たない。
 '
 '   ただし **Connect の第 2 引数（セッション指定）は ts5250 独自**。

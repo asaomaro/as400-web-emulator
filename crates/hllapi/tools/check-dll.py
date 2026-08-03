@@ -12,7 +12,7 @@
 
 外部ライブラリを使わずに読む（この検査のために依存を増やしたくない）。
 
-    python3 scripts/check-hllapi-dll.py <dll または so> [...]
+    python3 crates/hllapi/tools/check-dll.py <dll または so> [...]
 """
 
 import struct
