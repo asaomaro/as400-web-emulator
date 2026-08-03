@@ -1,0 +1,10 @@
+schema: 3
+slug: hllapi-bridge
+current: walkthrough
+approved: [requirement, research, spec, plan, test, review, walkthrough]
+mode: autonomous
+humanGates: []
+maxSendBacks: 3
+dependsOn: []
+subtasks: [01-server, 02-bridge]
+activeSubtask: done
