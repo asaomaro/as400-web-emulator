@@ -537,3 +537,59 @@ describe("Connect の指定（どのシステムのどのセッションか）",
     expect(lines[1]).toMatch(/^B h 2x10 本番$/u);
   });
 });
+
+/**
+ * **`Connect("A")` の割り当て**——指定を書かない標準の使い方。
+ *
+ * `docs/hllapi-sample.bas` の `Connect` は **128 バイトの固定長**で渡す
+ * （`"A"` ＋ 空白 127）。詰め物で 2 度踏んでいるので、**サンプルが実際に送る形**で見る。
+ */
+describe("Connect(\"A\") の割り当て", () => {
+  /** VBA サンプルが実際に送る形（"A" ＋ 空白で 128 バイト） */
+  const vbaShape = (psName: string) => ({ data: psName.padEnd(128, " "), length: 128 });
+  const at = (id: string, hour: string) => ({ id, connectedAt: `2026-08-03T${hour}:00:00Z` });
+  const bound = async (deps: HllapiDeps) => text(await call(deps, HF.QUERY_SESSIONS, { length: 256 })).trim();
+
+  it("**1 台だけ動いていれば、それが割り当たる**", async () => {
+    const { deps } = fakeDeps({ sessions: [at("only", "00")] });
+    expect((await call(deps, HF.CONNECT_PS, vbaShape("A"))).rc).toBe(HRC.SUCCESSFUL);
+    // 実際に操作できる（繋がったつもりで終わっていない）
+    expect((await call(deps, HF.COPY_PS, { length: 20 })).rc).toBe(HRC.SUCCESSFUL);
+  });
+
+  it("**空白の詰め物があっても効く**（サンプルの固定長がそのまま通る）", async () => {
+    const { deps } = fakeDeps({ sessions: [at("only", "00")] });
+    expect((await call(deps, HF.CONNECT_PS, vbaShape("A"))).rc).toBe(HRC.SUCCESSFUL);
+  });
+
+  it("1 台も動いていなければ rc=1", async () => {
+    const { deps } = fakeDeps({ sessions: [] });
+    expect((await call(deps, HF.CONNECT_PS, vbaShape("A"))).rc).toBe(HRC.PS_ID_INVALID);
+  });
+
+  it("2 台なら A=古いほう・B=新しいほう", async () => {
+    const { deps } = fakeDeps({ sessions: [at("old", "00"), at("new", "01")] });
+    expect((await call(deps, HF.CONNECT_PS, vbaShape("A"))).rc).toBe(HRC.SUCCESSFUL);
+    expect((await call(deps, HF.CONNECT_PS, vbaShape("B"))).rc).toBe(HRC.SUCCESSFUL);
+    expect(await bound(deps)).toBe("A h 2x10 old\nB h 2x10 new");
+  });
+
+  it("**1 台しか無いのに B を指すと、その 1 台が割り当たる**（空きへ寄せる）", async () => {
+    const { deps } = fakeDeps({ sessions: [at("only", "00")] });
+    expect((await call(deps, HF.CONNECT_PS, vbaShape("B"))).rc).toBe(HRC.SUCCESSFUL);
+    expect(await bound(deps)).toBe("B h 2x10 only");
+  });
+
+  it("**空きが無ければ rc=1**（同じ 1 台を A と B の両方には割り当てない）", async () => {
+    const { deps } = fakeDeps({ sessions: [at("only", "00")] });
+    await call(deps, HF.CONNECT_PS, vbaShape("A"));
+    expect((await call(deps, HF.CONNECT_PS, vbaShape("B"))).rc).toBe(HRC.PS_ID_INVALID);
+  });
+
+  it("同じ短縮名をもう一度繋いでも同じ 1 台のまま", async () => {
+    const { deps } = fakeDeps({ sessions: [at("only", "00")] });
+    await call(deps, HF.CONNECT_PS, vbaShape("A"));
+    expect((await call(deps, HF.CONNECT_PS, vbaShape("A"))).rc).toBe(HRC.SUCCESSFUL);
+    expect(await bound(deps)).toBe("A h 2x10 only");
+  });
+});
