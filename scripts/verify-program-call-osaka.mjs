@@ -188,6 +188,23 @@ try {
       typeof s2.body.outputs?.[0] === "string" && s2.body.outputs[0].startsWith("S:HI"),
       `outputs[0]=${JSON.stringify(s2.body.outputs?.[0])}`);
 
+    // **4 バイトを超える型は参照渡しで受ける**（値渡しは 4 バイトまで。実機で確認）
+    const s4 = await callSrv("SRVADD8R", [
+      { type: "bin", value: "20", bytes: 8 },
+      { type: "bin", value: "22", bytes: 8 },
+      { type: "bin", dir: "out", bytes: 8 }
+    ]);
+    check("**8 バイト整数を参照渡しで往復**（20+22=42）", s4.body.outputs?.[2] === "42",
+      `outputs[2]=${JSON.stringify(s4.body.outputs?.[2])} ${s4.body.messages?.[0]?.id ?? ""}`);
+
+    // **値渡しが 4 バイトを超えたら断る**（通すと呼べてしまい結果が静かに壊れる）
+    const s5 = await callSrv("SRVADD8", [
+      { type: "bin", value: "20", bytes: 8, pass: "value" },
+      { type: "bin", value: "22", bytes: 8, pass: "value" }
+    ], "int");
+    check("**値渡しで 4 バイト超は拒否**（黙って壊れた値を返さない）", s5.status === 400,
+      `status=${s5.status} ${s5.body.code ?? ""}`);
+
     // 無い手続き
     const s3 = await callSrv("NOSUCHPROC", []);
     check("**無い手続きは失敗が返る**", s3.body.success === false,

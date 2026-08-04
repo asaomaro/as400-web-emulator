@@ -151,6 +151,37 @@ try {
     "    txt char(20);",
     "  end-pi;",
     "  txt = 'S:' + %trimr(txt);",
+    "end-proc;",
+    // **8 バイトの値渡しと 8 バイトの戻り**（4 バイトを超える型の確認用）
+    "dcl-proc SRVADD8 export;",
+    "  dcl-pi *n int(20);",
+    "    a int(20) value;",
+    "    b int(20) value;",
+    "  end-pi;",
+    "  return a + b;",
+    "end-proc;",
+    // **4 バイトを超える型は参照渡しで受ける**（QZRUCLSP の値渡しは 4 バイトまで）
+    "dcl-proc SRVADD8R export;",
+    "  dcl-pi *n;",
+    "    a int(20) const;",
+    "    b int(20) const;",
+    "    r int(20);",
+    "  end-pi;",
+    "  r = a + b;",
+    "end-proc;",
+    "dcl-proc SRVDBLR export;",
+    "  dcl-pi *n;",
+    "    a float(8) const;",
+    "    r float(8);",
+    "  end-pi;",
+    "  r = a * 2;",
+    "end-proc;",
+    // **浮動小数の戻り**（QZRUCLSP が扱えるかの確認用）
+    "dcl-proc SRVDBL export;",
+    "  dcl-pi *n float(8);",
+    "    a float(8) value;",
+    "  end-pi;",
+    "  return a * 2;",
     "end-proc;"
   ];
   for (const c of [`DLTSRVPGM SRVPGM(${LIB}/${SMBR})`, `RMVM FILE(${LIB}/QRPGLESRC) MBR(${SMBR})`]) {

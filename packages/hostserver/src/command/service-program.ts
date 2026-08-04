@@ -25,17 +25,42 @@
  *
  * **戻り値の器は戻り値が無くても渡す**——省くと `MCH3601`（ポインタ不正）になる。
  */
+import { As400Error } from "@ts5250/base";
 import { codecForCcsid } from "@ts5250/ebcdic";
 import type { CommandResult } from "./command-connection.js";
 import type { ProgramParameter } from "./command-datastream.js";
 
-/** 引数の渡し方。**既定は参照渡し**（IBM i の慣習） */
+/**
+ * 引数の渡し方。**既定は参照渡し**（IBM i の慣習）。
+ *
+ * ## 値渡しは 4 バイトまで（実機で確かめた）
+ *
+ * `int(20)`（8 バイト）を値渡しにすると**呼べてしまうが結果が 0 になる**——
+ * `float(8)` も同様に壊れた値が返る。**どちらも失敗しない**ので気づきにくい。
+ *
+ * **4 バイトを超える型は参照渡しにすること。** 実機で `int(20)` と `float(8)` を
+ * 参照渡しで往復させ、正しい値（42 / 3）が返ることを確認してある。
+ */
 export type PassBy = "reference" | "value";
 
-/** `QZRUCLSP` が使う番号。**取り違えると戻り値が 0 になるだけで失敗しない** */
+/**
+ * `QZRUCLSP` が使う番号。**取り違えると戻り値が 0 になるだけで失敗しない**。
+ *
+ * 1 と 2 以外（3 など）は `CPF226E` で断られる（実機で確認）。
+ */
 const PASS_CODE: Record<PassBy, number> = { value: 1, reference: 2 };
 
-/** 戻り値の形式 */
+/** 値渡しで通せる最大バイト数（これを超えると壊れた値が返る） */
+export const MAX_PASS_BY_VALUE_BYTES = 4;
+
+/**
+ * 戻り値の形式。
+ *
+ * **`int`（4 バイト整数）までしか扱えない。** 実機で試したところ、
+ * 8 バイト整数も浮動小数も**壊れた値が返る**（形式番号を変えても直らない）。
+ * 大きな戻り値が要るなら、**出力引数を参照渡しで受ける**こと——
+ * `int(20)` と `float(8)` はそれで正しく往復する。
+ */
 export type ReturnKind = "none" | "int";
 const RETURN_CODE: Record<ReturnKind, number> = { none: 0, int: 1 };
 
@@ -77,9 +102,34 @@ function padded10(text: string, ccsid: number): Uint8Array {
   return out;
 }
 
+/** その引数のバイト長（値渡しの上限を見るのに使う） */
+function paramBytes(p: ProgramParameter): number {
+  switch (p.type) {
+    case "in":
+      return p.data.length;
+    case "inout":
+      return Math.max(p.data.length, p.length);
+    case "out":
+      return p.length;
+    case "null":
+      return 0;
+  }
+}
+
 /** `QZRUCLSP` へ渡すパラメータ列を組む */
 export function buildServiceProgramParams(spec: ServiceProgramCallSpec): ProgramParameter[] {
   const codec = codecForCcsid(spec.ccsid);
+  // **値渡しの上限を超えていたら断る。** 通すと呼べてしまい、
+  // 結果だけが静かに壊れる（実機で確認）——失敗しないので気づけない
+  for (const [i, a] of spec.args.entries()) {
+    if ((a.pass ?? "reference") === "value" && paramBytes(a.param) > MAX_PASS_BY_VALUE_BYTES) {
+      throw new As400Error(
+        "CONFIG_ERROR",
+        `引数 ${i + 1}: 値渡しは ${MAX_PASS_BY_VALUE_BYTES} バイトまでです` +
+          `（${paramBytes(a.param)} バイト）。参照渡しにしてください`
+      );
+    }
+  }
   const formats = spec.args.map((a) => bin4(PASS_CODE[a.pass ?? "reference"]));
   return [
     { type: "in", data: concat([padded10(spec.serviceProgram, spec.ccsid), padded10(spec.library, spec.ccsid)]) },
