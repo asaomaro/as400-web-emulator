@@ -88,6 +88,14 @@ export {
 } from "./command/command-message.js";
 export type { ProgramParameter } from "./command/command-datastream.js";
 export {
+  buildServiceProgramParams,
+  splitServiceProgramOutputs,
+  type PassBy,
+  type ReturnKind,
+  type ServiceProgramCallSpec,
+  type ServiceProgramResult
+} from "./command/service-program.js";
+export {
   toProgramParameters,
   fromProgramOutputs,
   argByteLength,

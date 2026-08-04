@@ -136,6 +136,64 @@ try {
       `outputs[0]=${JSON.stringify(r8.body.outputs?.[0])}`);
   }
 
+  // ---- 5.7 **ゾーン 10 進の往復**（RPG。CL の *DEC は詰めなのでゾーンは表せない）----
+  const z1 = await callProgram("PGMTSTZ", "ASAOLIB", [
+    { type: "zoned", dir: "inout", value: "21", digits: 7, decimals: 2 },
+    { type: "char", dir: "inout", value: "AB", length: 20 }
+  ]);
+  if (z1.body.messages?.[0]?.id === "CPF9801") {
+    check("（PGMTSTZ 未作成 → skip）", true);
+  } else {
+    check("**ゾーンの数値が往復する**（21 → 42）", z1.body.outputs?.[0] === "42.00",
+      `outputs[0]=${JSON.stringify(z1.body.outputs?.[0])}`);
+    const z2 = await callProgram("PGMTSTZ", "ASAOLIB", [
+      { type: "zoned", dir: "inout", value: "-1.5", digits: 7, decimals: 2 },
+      { type: "char", dir: "inout", value: "C", length: 20 }
+    ]);
+    // **符号は最終バイトの上位ニブル**（詰めと位置が違う）。負でしか取り違えが出ない
+    check("**ゾーンの負の値も往復する**（-1.5 → -3）", z2.body.outputs?.[0] === "-3.00",
+      `outputs[0]=${JSON.stringify(z2.body.outputs?.[0])}`);
+  }
+
+  // ---- 5.8 **サービスプログラムの手続き**（QZRUCLSP 経由）----
+  const callSrv = async (procedure, args, returns) => {
+    const res = await fetch(`http://127.0.0.1:${PORT}/api/host/service-program`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        source: { system: `srv:${sys.id}` },
+        serviceProgram: "SRVTST",
+        library: "ASAOLIB",
+        procedure,
+        ...(returns ? { returns } : {}),
+        args
+      })
+    });
+    return { status: res.status, body: await res.json() };
+  };
+
+  const s1 = await callSrv("SRVADD", [
+    { type: "bin", value: "20", bytes: 4, pass: "value" },
+    { type: "bin", value: "22", bytes: 4, pass: "value" }
+  ], "int");
+  if (s1.body.messages?.[0]?.id === "CPF9801") {
+    check("（SRVTST 未作成 → skip）", true);
+  } else {
+    check("**サービスプログラムの手続きが呼べる**（20+22=42）", s1.body.returnValue === 42,
+      `returnValue=${s1.body.returnValue} ${s1.body.messages?.[0]?.id ?? ""}`);
+
+    // 参照渡し（既定）。戻り値なし
+    const s2 = await callSrv("SRVECHO", [{ type: "char", dir: "inout", value: "HI", length: 20 }]);
+    check("**参照渡しの引数が書き換わる**（HI → S:HI）",
+      typeof s2.body.outputs?.[0] === "string" && s2.body.outputs[0].startsWith("S:HI"),
+      `outputs[0]=${JSON.stringify(s2.body.outputs?.[0])}`);
+
+    // 無い手続き
+    const s3 = await callSrv("NOSUCHPROC", []);
+    check("**無い手続きは失敗が返る**", s3.body.success === false,
+      `${s3.body.messages?.[0]?.id ?? ""}`);
+  }
+
   // ---- 6. 画面から呼べる ----
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });

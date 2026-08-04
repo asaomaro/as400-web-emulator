@@ -11,7 +11,9 @@ import type { Hono } from "hono";
 import { z } from "zod";
 import { As400Error } from "@ts5250/base";
 import {
+  buildServiceProgramParams,
   fromProgramOutputs,
+  splitServiceProgramOutputs,
   toProgramParameters,
   type CommandConnection,
   type ProgramArg
@@ -34,6 +36,21 @@ const argSchema = z.object({
   digits: z.number().int().min(1).max(63).optional(),
   decimals: z.number().int().min(0).max(63).optional(),
   bytes: z.union([z.literal(2), z.literal(4), z.literal(8)]).optional()
+});
+
+/** サービスプログラム用。`pass` は**参照渡しが既定** */
+const serviceArgSchema = argSchema.extend({
+  pass: z.enum(["reference", "value"]).optional()
+});
+
+const serviceRequestSchema = z.object({
+  source: sourceSchema,
+  serviceProgram: z.string().min(1).max(10),
+  library: z.string().min(1).max(10),
+  procedure: z.string().min(1).max(255),
+  /** 戻り値の形式。既定は `none` */
+  returns: z.enum(["none", "int"]).optional(),
+  args: z.array(serviceArgSchema).max(255).optional()
 });
 
 const requestSchema = z.object({
@@ -75,6 +92,60 @@ export function registerHostProgramRoutes(app: Hono<{ Variables: AuthVars }>, de
         })),
         // 引数と同じ並び。**入力専用の位置は null**
         outputs: fromProgramOutputs(args, outputs, { ccsid }).map((v) => v ?? null)
+      });
+    } catch (e) {
+      const err = e as As400Error;
+      return c.json({ error: err.message, code: err.code ?? "UNKNOWN" }, statusOf(err));
+    } finally {
+      conn?.close();
+    }
+  });
+
+  /**
+   * **サービスプログラムの手続きを呼ぶ。**
+   *
+   * 新しい電文は要らない——`QSYS/QZRUCLSP` という普通のプログラムが仲介する
+   * （`service-program.ts` の注記）。
+   */
+  app.post("/api/host/service-program", async (c) => {
+    const parsed = serviceRequestSchema.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "invalid request" }, 400);
+    }
+    const body = parsed.data;
+    const user = c.get("user");
+
+    let conn: CommandConnection | undefined;
+    try {
+      const opts = resolveSource(deps.resolver, body.source, user);
+      conn = await openCommand(opts);
+      const ccsid = opts.ccsid ?? 37;
+      const args = (body.args ?? []) as (ProgramArg & { pass?: "reference" | "value" })[];
+      const params = toProgramParameters(args, { ccsid });
+      const built = buildServiceProgramParams({
+        serviceProgram: body.serviceProgram,
+        library: body.library,
+        procedure: body.procedure,
+        ...(body.returns !== undefined ? { returns: body.returns } : {}),
+        args: params.map((param, i) => ({
+          param,
+          ...(args[i]?.pass !== undefined ? { pass: args[i]!.pass! } : {})
+        })),
+        ccsid
+      });
+      const { result, outputs } = await conn.call("QZRUCLSP", "QSYS", built);
+      const split = splitServiceProgramOutputs(outputs, args.length);
+      return c.json({
+        success: result.success,
+        returnCode: result.returnCode,
+        messages: result.messages.map((m) => ({
+          id: m.id,
+          text: m.text,
+          severity: m.severity,
+          kind: m.kind
+        })),
+        ...(body.returns === "int" ? { returnValue: split.returnValue ?? null } : {}),
+        outputs: fromProgramOutputs(args, split.args, { ccsid }).map((v) => v ?? null)
       });
     } catch (e) {
       const err = e as As400Error;

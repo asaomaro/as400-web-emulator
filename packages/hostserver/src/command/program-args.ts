@@ -51,6 +51,15 @@ export type ProgramArg =
   /** ヌルポインタ */
   | { type: "null" };
 
+/** サービスプログラム用に渡し方を添えた引数 */
+export type ServiceArg = ProgramArg & { pass?: ArgPass };
+
+/**
+ * 引数の渡し方（サービスプログラムのみ意味を持つ）。**既定は参照渡し**。
+ * プログラム（`*PGM`）は常に参照渡しなので、この項目は無視される。
+ */
+export type ArgPass = "reference" | "value";
+
 export interface ArgCodecOptions {
   /** 文字パラメータの CCSID。**接続のものに従う**（取り違えると静かに化ける） */
   ccsid: number;
