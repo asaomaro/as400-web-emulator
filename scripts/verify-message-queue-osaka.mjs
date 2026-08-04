@@ -154,6 +154,66 @@ try {
 
   await post("/remove", { queue: MSGQ, library: LIB });
 
+  // ---- QSYSOPR に対する実操作 ----
+  //
+  // **共有の本番資源なので、自分が作ったメッセージだけを触る。**
+  // 送る → 応答する → **自分の分だけキー指定で消す**、の往復に限定し、
+  // 他人のメッセージには一切手を出さない（全消しは絶対にしない）。
+  const OPER = { queue: "QSYSOPR", library: "QSYS" };
+  const me = (sys.signon.user ?? "").toUpperCase();
+  const baseline = await post("", { ...OPER, max: 500 });
+  check("**QSYSOPR を読める**（共有の待ち行列）", Array.isArray(baseline.body.messages),
+    `${baseline.body.messages?.length} 件`);
+
+  const mineBefore = new Set((baseline.body.messages ?? []).map((m) => m.key));
+  const created = [];
+  try {
+    const o1 = await post("/send", { text: `ts5250 verify ${Date.now()}`, ...OPER, toQueue: "QSYSOPR", toLibrary: "QSYS" });
+    check("**QSYSOPR へ送れる**", o1.body.success === true, o1.body.messages?.[0]?.id ?? "");
+
+    const o2 = await post("/send", {
+      text: "ts5250 verify inquiry", toQueue: "QSYSOPR", toLibrary: "QSYS",
+      inquiry: true, replyQueue: "QSYSOPR", replyLibrary: "QSYS"
+    });
+    check("**QSYSOPR へ照会を送れる**", o2.body.success === true, o2.body.messages?.[0]?.id ?? "");
+
+    const after = await post("", { ...OPER, max: 500 });
+    // **自分が今作った分だけ**を拾う（他人のものに触れない）
+    for (const m of after.body.messages ?? []) {
+      if (!mineBefore.has(m.key) && (m.fromUser ?? "").toUpperCase() === me) created.push(m);
+    }
+    check("**送ったものが一覧に出る**", created.length >= 2, `${created.length} 件（自分の分だけ）`);
+
+    const inq = created.find((m) => m.type === "INQUIRY");
+    check("**照会として入っている**", inq !== undefined, inq?.type);
+    if (inq) {
+      const rp = await post("/reply", { ...OPER, key: inq.key, reply: "OK" });
+      // **一般利用者が QSYSOPR の照会に応答できるか**——権限次第なので、
+      // 断られた場合もそれを事実として記録する
+      check(`**QSYSOPR の照会に応答できる**（利用者 ${me}）`, rp.body.success === true,
+        rp.body.success === true ? "" : rp.body.messages?.map((m) => `${m.id} ${m.text?.slice(0, 50)}`).join(" / "));
+    }
+  } finally {
+    // **後片付け——自分が作った分だけをキー指定で消す。** 全消しは絶対にしない
+    const now = await post("", { ...OPER, max: 500 });
+    let removed = 0;
+    for (const m of now.body.messages ?? []) {
+      const mine = !mineBefore.has(m.key) && (m.fromUser ?? "").toUpperCase() === me;
+      if (!mine) continue;
+      const r = await post("/remove", { ...OPER, key: m.key });
+      if (r.body.success === true) removed += 1;
+    }
+    const final = await post("", { ...OPER, max: 500 });
+    const leftover = (final.body.messages ?? []).filter(
+      (m) => !mineBefore.has(m.key) && (m.fromUser ?? "").toUpperCase() === me
+    );
+    check("**自分が作った分を消し切った**（他人のものは触っていない）", leftover.length === 0,
+      `${removed} 件消した / 残り ${leftover.length}`);
+    check("**他人のメッセージが減っていない**",
+      (final.body.messages ?? []).filter((m) => mineBefore.has(m.key)).length === mineBefore.size,
+      `${mineBefore.size} → ${(final.body.messages ?? []).filter((m) => mineBefore.has(m.key)).length}`);
+  }
+
   // ---- 差し込みを断る ----
   const bad = await post("/send", { text: "x", toQueue: `${MSGQ}) DLTLIB LIB(NOSUCH` });
   check("**CL の差し込みを断る**", bad.status === 400, `status=${bad.status} ${bad.body.code ?? ""}`);
