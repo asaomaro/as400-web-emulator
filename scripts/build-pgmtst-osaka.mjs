@@ -176,6 +176,14 @@ try {
     "  end-pi;",
     "  r = a * 2;",
     "end-proc;",
+    // **ポインタの戻り**（QZRUCLSP が扱えるかの確認用）
+    "dcl-proc SRVPTR export;",
+    "  dcl-pi *n pointer;",
+    "  end-pi;",
+    "  dcl-s buf char(8) static;",
+    "  buf = 'PTR-OK';",
+    "  return %addr(buf);",
+    "end-proc;",
     // **浮動小数の戻り**（QZRUCLSP が扱えるかの確認用）
     "dcl-proc SRVDBL export;",
     "  dcl-pi *n float(8);",

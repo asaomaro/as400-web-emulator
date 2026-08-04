@@ -47,7 +47,9 @@ const serviceRequestSchema = z.object({
   source: sourceSchema,
   serviceProgram: z.string().min(1).max(10),
   library: z.string().min(1).max(10),
-  procedure: z.string().min(1).max(255),
+  // **API 側に上限は無い**（4007 バイトの器で通ることを実機で確認）。
+  // ここの上限はこちらの都合——C++ の装飾名などは 255 を超えうる
+  procedure: z.string().min(1).max(4000),
   /** 戻り値の形式。既定は `none` */
   returns: z.enum(["none", "int"]).optional(),
   args: z.array(serviceArgSchema).max(255).optional()

@@ -376,7 +376,7 @@ export function registerHostServerTools(server: McpServer, deps: ToolDeps): void
         ...targetShape,
         serviceProgram: z.string(),
         library: z.string().describe("ライブラリー名。*LIBL も指定できる"),
-        procedure: z.string().describe("公開されている手続き名（大文字小文字を区別する）"),
+        procedure: z.string().max(4000).describe("公開されている手続き名（大文字小文字を区別する）。長い装飾名も通る"),
         returns: z.enum(["none", "int"]).optional(),
         args: z.array(programArgSchema.extend({ pass: z.enum(["reference", "value"]).optional() })).max(255).optional()
       },

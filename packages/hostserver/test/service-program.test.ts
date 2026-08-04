@@ -96,6 +96,23 @@ describe("QZRUCLSP へ渡す形", () => {
   });
 });
 
+describe("実機で確かめた制約", () => {
+  it("**戻り値は 4 バイトの器**（ポインタは運べない）", () => {
+    // 器を 16 バイトにしても書かれるのは先頭 4 バイトだけで、呼ぶたびに違う値になる。
+    // IBM i のポインタは 16 バイトのタグ付きなので、そもそも運べない（実機で確認）
+    expect(build({ returns: "int" })[6]).toEqual({ type: "out", length: 4 });
+  });
+
+  it("**手続き名の長さに上限を設けていない**（API 側に上限が無い）", () => {
+    // 4007 バイトの器で渡しても通ることを実機で確認した。
+    // C++ の装飾名などは 255 を超えうるので、ここで切らない
+    const long = "P".repeat(3000);
+    const p = build({ procedure: long })[1]!;
+    if (p.type !== "in") throw new Error("in のはず");
+    expect(p.data).toHaveLength(3001); // 名前 ＋ ヌル終端
+  });
+});
+
 describe("応答の切り出し", () => {
   it("戻り値は 6 番目、実引数は 7 番目から", () => {
     const outputs = [
