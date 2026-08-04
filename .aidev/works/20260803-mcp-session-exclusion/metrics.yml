@@ -13,3 +13,4 @@ events:
   - { ts: 2026-08-04T00:15:46Z, phase: walkthrough, event: start }
   - { ts: 2026-08-04T00:15:46Z, phase: walkthrough, event: approved }
   - { ts: 2026-08-04T00:16:13Z, phase: deliver, event: start }
+  - { ts: 2026-08-04T00:16:48Z, phase: deliver, event: approved, metrics: { pr: #297 } }
