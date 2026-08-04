@@ -297,7 +297,6 @@ try {
   check("**掴んだ欄に書ける**", typed.startsWith("ZZ"), `"${typed}"`);
   await locator.first().fill("");
   await page.screenshot({ path: `${SHOTS}/8-field-by-id.png` });
->>>>>>> 8baf3e2 (feat(tn5250): 画面の欄を、経路をまたいで同じ言葉で指せるようにする)
 
   sessions.closeAll?.();
 } catch (e) {
