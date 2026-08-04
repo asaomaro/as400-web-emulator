@@ -102,6 +102,40 @@ try {
     { type: "packed", value: "10", digits: 15, decimals: 5 }
   ]);
   check("**長すぎる文字は拒否**（黙って切らない）", r5.status === 400, `status=${r5.status} ${r5.body.code ?? ""}`);
+  // ---- 5.5 **inout の往復**（数値と文字）----
+  // ASAOLIB/PGMTST は参照渡しの引数を書き換えるだけの CL（`scripts/build-pgmtst-osaka.mjs` で作る）:
+  //   &NUM（詰め 10 進 15,5） = &NUM * 2
+  //   &TXT（文字 20）        = 'ECHO:' + &TXT
+  const r6 = await callProgram("PGMTST", "ASAOLIB", [
+    { type: "packed", dir: "inout", value: "21", digits: 15, decimals: 5 },
+    { type: "char", dir: "inout", value: "ABC", length: 20 }
+  ]);
+  if (r6.body.success === false && r6.body.messages?.[0]?.id === "CPF9801") {
+    check("（PGMTST 未作成 → skip。scripts/build-pgmtst-osaka.mjs で作れる）", true);
+  } else {
+    check("**inout の数値が往復する**（21 → 42）", r6.body.outputs?.[0] === "42.00000",
+      `outputs[0]=${JSON.stringify(r6.body.outputs?.[0])}`);
+    check("**inout の文字が往復する**（ABC → ECHO:ABC）",
+      typeof r6.body.outputs?.[1] === "string" && r6.body.outputs[1].startsWith("ECHO:ABC"),
+      `outputs[1]=${JSON.stringify(r6.body.outputs?.[1])}`);
+
+    // **負の値**——符号ニブルの取り違えはここでだけ出る
+    const r7 = await callProgram("PGMTST", "ASAOLIB", [
+      { type: "packed", dir: "inout", value: "-1.5", digits: 15, decimals: 5 },
+      { type: "char", dir: "inout", value: "X", length: 20 }
+    ]);
+    check("**負の値も往復する**（-1.5 → -3）", r7.body.outputs?.[0] === "-3.00000",
+      `outputs[0]=${JSON.stringify(r7.body.outputs?.[0])}`);
+
+    // **小数**——桁合わせの取り違えはここで出る
+    const r8 = await callProgram("PGMTST", "ASAOLIB", [
+      { type: "packed", dir: "inout", value: "0.00003", digits: 15, decimals: 5 },
+      { type: "char", dir: "inout", value: "Y", length: 20 }
+    ]);
+    check("**小数も往復する**（0.00003 → 0.00006）", r8.body.outputs?.[0] === "0.00006",
+      `outputs[0]=${JSON.stringify(r8.body.outputs?.[0])}`);
+  }
+
   // ---- 6. 画面から呼べる ----
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
