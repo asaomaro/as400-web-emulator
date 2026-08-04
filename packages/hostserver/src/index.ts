@@ -87,6 +87,21 @@ export {
   type MessageKind
 } from "./command/command-message.js";
 export type { ProgramParameter } from "./command/command-datastream.js";
+export {
+  toProgramParameters,
+  fromProgramOutputs,
+  argByteLength,
+  type ProgramArg,
+  type ArgDirection,
+  type ArgCodecOptions
+} from "./command/program-args.js";
+export {
+  stringToPackedDecimal,
+  stringToZonedDecimal,
+  packedByteLength,
+  packedDecimalToString,
+  zonedDecimalToString
+} from "./db/db-decimal.js";
 
 // スプール（一覧＝コマンドサーバー / 中身＝ネットワーク印刷サーバー）
 export { listSpooledFiles, parseSpoolRecord, buildFilter } from "./spool/spool-list.js";

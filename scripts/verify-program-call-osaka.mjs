@@ -1,0 +1,136 @@
+/**
+ * **プログラム呼び出しの実機検証**（SR-OSAKA）。
+ *
+ *   node --env-file=.env scripts/verify-program-call-osaka.mjs
+ *
+ * ## なぜ `QCMDEXC` から通すのか
+ *
+ * IBM i の標準プログラムで**どの機にも必ずある**ので、フィクスチャの用意を待たずに
+ * 経路を通せる。引数は `command char(N)` ＋ `length packed(15,5)` で、
+ * **文字と詰め 10 進の入力**をそのまま使う。効果も観測できる（コマンドが実行される）。
+ *
+ * 出力引数の往復は `QUSRTVUS` 相当が要るので、ここでは
+ * **`QSYS/QWCRSVAL`（システム値の取り出し）** を使う——受け取り域が out、長さが bin(4)。
+ */
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { serve } from "@hono/node-server";
+import { WebSocketServer } from "ws";
+import { chromium } from "playwright";
+import { buildApp, SessionManager, ServerConfigStore, PersonalConfigStore, ConfigResolver } from "@ts5250/server";
+
+const PORT = 3495;
+const TMP = "/tmp/ts5250-progcall";
+mkdirSync(TMP, { recursive: true });
+
+const results = [];
+const check = (n, ok, d = "") => {
+  results.push({ n, ok });
+  process.stdout.write(`${ok ? "OK  " : "NG  "} ${n}${d ? ` — ${String(d).slice(0, 140)}` : ""}\n`);
+};
+
+const cfg = JSON.parse(readFileSync("connections.json", "utf8"));
+const sys = cfg.systems.find((s) => s.name === "SR-OSAKA");
+sys.signon = { user: sys.signon.user, passwordEnv: "AS400_PASSWORD" };
+cfg.sessions = [];
+writeFileSync(`${TMP}/cfg.json`, JSON.stringify(cfg));
+
+const resolver = new ConfigResolver(
+  ServerConfigStore.fromFile(`${TMP}/cfg.json`),
+  new PersonalConfigStore({ systems: [], sessions: [] })
+);
+const sessions = new SessionManager();
+const app = buildApp({ sessions, resolver, version: "verify", webRoot: "packages/web-ui/dist" });
+const wss = new WebSocketServer({ noServer: true });
+const server = serve({ fetch: app.fetch, port: PORT, websocket: { server: wss } });
+await new Promise((r) => setTimeout(r, 400));
+
+const callProgram = async (program, library, args) => {
+  const res = await fetch(`http://127.0.0.1:${PORT}/api/host/program`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source: { system: `srv:${sys.id}` }, program, library, args })
+  });
+  return { status: res.status, body: await res.json() };
+};
+
+try {
+  // ---- 1. QCMDEXC（文字 in ＋ 詰め 10 進 in）----
+  // 副作用の無いコマンドを選ぶ（実機なので）。CHGJOB は自分のジョブだけに効く
+  const cmd = "CHGJOB LOG(4 00 *SECLVL)";
+  const r1 = await callProgram("QCMDEXC", "QSYS", [
+    { type: "char", value: cmd, length: cmd.length },
+    { type: "packed", value: String(cmd.length), digits: 15, decimals: 5 }
+  ]);
+  check("**QCMDEXC を呼べた**（文字 ＋ 詰め 10 進）", r1.status === 200 && r1.body.success === true,
+    `status=${r1.status} rc=${r1.body.returnCode} ${JSON.stringify(r1.body.messages?.[0] ?? "")}`);
+
+  // ---- 2. 誤った長さを渡すと**ホストが失敗を返す**（黙って成功しない）----
+  const r2 = await callProgram("QCMDEXC", "QSYS", [
+    { type: "char", value: cmd, length: cmd.length },
+    { type: "packed", value: "1", digits: 15, decimals: 5 }
+  ]);
+  check("**長さが違えば失敗が返る**（黙って成功にならない）", r2.body.success === false,
+    `success=${r2.body.success} ${r2.body.messages?.[0]?.id ?? ""}`);
+
+  // ---- 3. 存在しないプログラム ----
+  const r3 = await callProgram("NOSUCHPGM", "QSYS", []);
+  check("**無いプログラムは失敗が返る**", r3.body.success === false || r3.status >= 400,
+    `status=${r3.status} ${r3.body.messages?.[0]?.id ?? r3.body.code ?? ""}`);
+
+  // ---- 4. 出力引数の往復（QWCRSVAL でシステム値を取る）----
+  // 受け取り域 out(char) / 長さ bin(4) / 値の数 bin(4) / 値名 char(10) / エラーコード inout
+  const rcvLen = 100;
+  const r4 = await callProgram("QWCRSVAL", "QSYS", [
+    { type: "char", dir: "out", length: rcvLen },
+    { type: "bin", value: String(rcvLen), bytes: 4 },
+    { type: "bin", value: "1", bytes: 4 },
+    { type: "char", value: "QCCSID", length: 10 },
+    { type: "bytes", dir: "inout", value: "", length: 8 } // エラーコード（先頭 4 バイトが 0 = 例外で返す）
+  ]);
+  const rcv = r4.body.outputs?.[0];
+  check("**出力引数が返る**（QWCRSVAL でシステム値）", typeof rcv === "string" && rcv.length === rcvLen,
+    `success=${r4.body.success} 長さ=${rcv?.length} ${JSON.stringify(rcv?.slice(0, 30) ?? "")}`);
+  if (typeof rcv === "string") {
+    // 先頭 4 バイトは返した値の数（bin4）。文字として読んでいるので中身の判定は緩く
+    check("**入力専用の位置は null**（読むものが無い）", r4.body.outputs?.[1] === null,
+      JSON.stringify(r4.body.outputs?.slice(1, 3)));
+  }
+
+  // ---- 5. 変換の拒否が効く（黙って切らない・化けさせない）----
+  const r5 = await callProgram("QCMDEXC", "QSYS", [
+    { type: "char", value: "ABCDEFGHIJ", length: 3 },
+    { type: "packed", value: "10", digits: 15, decimals: 5 }
+  ]);
+  check("**長すぎる文字は拒否**（黙って切らない）", r5.status === 400, `status=${r5.status} ${r5.body.code ?? ""}`);
+  // ---- 6. 画面から呼べる ----
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  try {
+    await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: "networkidle" });
+    await page.locator(".card", { hasText: sys.name }).first().getByRole("button", { name: "選択" }).click();
+    await page.waitForTimeout(800);
+    await page.locator(".fn", { hasText: "プログラム呼び出し" }).first().getByRole("button", { name: "開く" }).click();
+    await page.waitForSelector(".pane[data-tab^='pgm:']", { timeout: 15_000 });
+    await page.getByRole("button", { name: "例を入れる" }).click();
+    await page.getByRole("button", { name: "呼び出す" }).click();
+    await page.waitForSelector(".section", { timeout: 30_000 });
+    await page.screenshot({ path: "/tmp/ts5250-progcall/pane.png" });
+    const text = await page.locator(".section").innerText();
+    check("**画面から呼べた**", text.includes("成功"), text.replace(/\n/gu, " ").slice(0, 80));
+  } catch (e) {
+    await page.screenshot({ path: "/tmp/ts5250-progcall/pane-error.png" }).catch(() => {});
+    check("画面から呼べた", false, String(e).slice(0, 120));
+  } finally {
+    await browser.close();
+  }
+} catch (e) {
+  check("例外なく完走する", false, String(e));
+} finally {
+  sessions.closeAll();
+  server.close();
+  wss.close();
+}
+
+const ng = results.filter((r) => !r.ok).length;
+process.stdout.write(`\n=== ${results.length} 件中 失敗 ${ng} 件 ===\n`);
+process.exit(ng === 0 ? 0 : 1);
