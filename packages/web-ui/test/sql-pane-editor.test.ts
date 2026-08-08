@@ -20,8 +20,8 @@ function selectSystem(): void {
   systemsStore.select(SYSTEM.ref);
 }
 
-/** `QSYS2.SYSCOLUMNS` への問い合わせにだけ列を返す偽 fetch */
-function mockColumns(names: string[]): { asked: string[] } {
+/** `SYSCOLUMNS` / `SYSTABLES` への問い合わせにだけ答える偽 fetch */
+function mockCatalog(columns: string[], tables: string[] = []): { asked: string[] } {
   const asked: string[] = [];
   globalThis.fetch = vi.fn(async (url: unknown, init?: RequestInit) => {
     const body = init?.body ? (JSON.parse(String(init.body)) as { sql?: string }) : {};
@@ -31,7 +31,17 @@ function mockColumns(names: string[]): { asked: string[] } {
         ok: true,
         status: 200,
         json: async () => ({
-          rows: names.map((n) => ({ COLUMN_NAME: n, DATA_TYPE: "CHAR", COLUMN_TEXT: `${n} の説明` }))
+          rows: columns.map((n) => ({ COLUMN_NAME: n, DATA_TYPE: "CHAR", COLUMN_TEXT: `${n} の説明` }))
+        })
+      } as Response;
+    }
+    if (String(url) === "/api/host/sql" && body.sql?.includes("SYSTABLES")) {
+      asked.push(body.sql);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          rows: tables.map((n) => ({ TABLE_NAME: n, TABLE_TYPE: "T", TABLE_TEXT: `${n} の説明` }))
         })
       } as Response;
     }
@@ -39,6 +49,9 @@ function mockColumns(names: string[]): { asked: string[] } {
   }) as typeof fetch;
   return { asked };
 }
+
+/** 列だけを返す（表の候補は使わないテスト向け） */
+const mockColumns = (names: string[]) => mockCatalog(names);
 
 beforeEach(() => {
   selectSystem();
@@ -233,6 +246,79 @@ describe("列の候補", () => {
     await ta.trigger("keydown", { key: "Tab" });
     await flushPromises();
     expect((ta.element as HTMLTextAreaElement).value).toBe(`${SQL}MENUCD`);
+    w.unmount();
+  });
+});
+
+/**
+ * `ライブラリー.` で**表の一覧**を出す（利用者の要望）。
+ * `FROM ASAOLIB.` は `tableRefsOf` から見ると「`ASAOLIB` という表」に見えるので、
+ * 書く位置で先に判別できているかも一緒に確かめる。
+ */
+describe("表の候補", () => {
+  it("`FROM ライブラリー.` で表の一覧が出る", async () => {
+    mockCatalog([], ["M_MENU", "M_MENUTR"]);
+    const w = open();
+    const ta = await type(w, "SELECT * FROM ASAOLIB.");
+    await ta.trigger("input");
+    await flushPromises();
+    expect(w.findAll(".sqlc-name").map((n) => n.text())).toEqual(["M_MENU", "M_MENUTR"]);
+    w.unmount();
+  });
+
+  it("**列ではなく表を問い合わせる**（`ASAOLIB` という表を探しに行かない）", async () => {
+    const { asked } = mockCatalog([], ["M_MENU"]);
+    const w = open();
+    const ta = await type(w, "SELECT * FROM ASAOLIB.");
+    await ta.trigger("input");
+    await flushPromises();
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toContain("SYSTABLES");
+    expect(asked[0]).toContain("TABLE_SCHEMA = 'ASAOLIB'");
+    w.unmount();
+  });
+
+  it("打ちかけの文字で絞り込む", async () => {
+    mockCatalog([], ["M_MENU", "M_MENUTR", "EMPMST"]);
+    const w = open();
+    const ta = await type(w, "SELECT * FROM ASAOLIB.M_MENUT");
+    await ta.trigger("input");
+    await flushPromises();
+    expect(w.findAll(".sqlc-name").map((n) => n.text())).toEqual(["M_MENUTR"]);
+    w.unmount();
+  });
+
+  it("確定すると表名が入る", async () => {
+    mockCatalog([], ["M_MENU"]);
+    const w = open();
+    const ta = await type(w, "SELECT * FROM ASAOLIB.");
+    await ta.trigger("input");
+    await flushPromises();
+    await ta.trigger("keydown", { key: "Enter" });
+    await flushPromises();
+    expect((ta.element as HTMLTextAreaElement).value).toBe("SELECT * FROM ASAOLIB.M_MENU");
+    w.unmount();
+  });
+
+  /** 表の位置でなくても、別名・表名で解けない修飾子はライブラリーとみなす */
+  it("`WHERE ライブラリー.` でも表の一覧に落とす", async () => {
+    const { asked } = mockCatalog([], ["M_MENU"]);
+    const w = open();
+    const ta = await type(w, "SELECT * FROM ASAOLIB.M_MENU T1 WHERE ASAOLIB.");
+    await ta.trigger("input");
+    await flushPromises();
+    expect(asked[0]).toContain("SYSTABLES");
+    w.unmount();
+  });
+
+  it("別名が解ければ列のまま（表の一覧に落ちない）", async () => {
+    const { asked } = mockCatalog(["MENUCD"], ["M_MENU"]);
+    const w = open();
+    const ta = await type(w, "SELECT * FROM ASAOLIB.M_MENU T1 WHERE T1.");
+    await ta.trigger("input");
+    await flushPromises();
+    expect(asked[0]).toContain("SYSCOLUMNS");
+    expect(w.findAll(".sqlc-name").map((n) => n.text())).toEqual(["MENUCD"]);
     w.unmount();
   });
 });

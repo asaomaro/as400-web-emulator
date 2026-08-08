@@ -1,16 +1,18 @@
 <script setup lang="ts">
 /**
- * 列の候補一覧（SQL 欄の `別名.` で出る）。
+ * 補完の候補一覧（SQL 欄の `.` で出る。列 or 表）。
  *
  * **入力欄そのものは `textarea` のまま**。候補は入力欄に重ねた別の箱で、
  * キーの取り回しは親（`SqlPane`）が持つ——`textarea` からフォーカスを移すと
  * 変換中の文字が確定してしまうので、**ここは絶対にフォーカスを取らない**
  * （選ぶのは親のキー操作か、マウスの `mousedown` を止めてのクリック）。
  */
-import type { ColumnCandidate } from "../sqlColumns.js";
+import type { Candidate, CandidateKind } from "../sqlColumns.js";
 
 const props = defineProps<{
-  items: readonly ColumnCandidate[];
+  items: readonly Candidate[];
+  /** 出しているものの種類（読み上げの見出しに使う） */
+  kind: CandidateKind;
   /** 選択中の位置（親がキーで動かす） */
   index: number;
   /** 入力欄の左上を原点とした表示位置 */
@@ -18,14 +20,14 @@ const props = defineProps<{
   top: number;
 }>();
 
-const emit = defineEmits<{ pick: [item: ColumnCandidate] }>();
+const emit = defineEmits<{ pick: [item: Candidate] }>();
 </script>
 
 <template>
   <ul
     class="sqlc"
     role="listbox"
-    aria-label="列の候補"
+    :aria-label="props.kind === 'table' ? '表の候補' : '列の候補'"
     :style="{ left: `${props.left}px`, top: `${props.top}px` }"
   >
     <li

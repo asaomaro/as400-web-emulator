@@ -21,8 +21,8 @@ import {
 import SqlLogPanel from "./SqlLogPanel.vue";
 import SqlCompletion from "./SqlCompletion.vue";
 import { toggleLineComment, indentLines, outdentLines } from "../sqlEdit.js";
-import { qualifierAt, resolveQualifier, tableRefsOf } from "../sqlRefs.js";
-import { fetchColumns, type ColumnCandidate } from "../sqlColumns.js";
+import { isTablePosition, qualifierAt, resolveQualifier, tableRefsOf } from "../sqlRefs.js";
+import { fetchColumns, fetchTables, type Candidate, type CandidateKind } from "../sqlColumns.js";
 import { caretPosition } from "../composables/caretPosition.js";
 import SqlResultTable from "./SqlResultTable.vue";
 import { appendSqlLog, type SqlLogEntry } from "../sqlLog.js";
@@ -526,13 +526,18 @@ async function applyEdit(result: { text: string; start: number; end: number }): 
 }
 
 /**
- * 列の候補。`別名.` / `表名.` を打つと出る。
+ * 補完の候補。`.` を打つと出る。
+ *
+ * - `別名.` / `表名.` … その表の**列**
+ * - `ライブラリー.` … そのライブラリーの**表**
  *
  * **`textarea` のままにする**（CodeMirror 等は入れない。AGENTS.md のバンドル規律）。
  * 候補は入力欄に重ねた別の箱で、キーはこちらで捌く——候補側にフォーカスを渡すと
  * 日本語の変換中に確定してしまう。
  */
-const completion = ref<{ items: ColumnCandidate[]; index: number; left: number; top: number } | undefined>();
+const completion = ref<
+  { items: Candidate[]; kind: CandidateKind; index: number; left: number; top: number } | undefined
+>();
 /** いま出ている候補が置き換える範囲（`.` の次〜キャレット） */
 let completionRange: { from: number; to: number } | undefined;
 /** 打鍵のたびに前の問い合わせが後から返って上書きしないための世代番号 */
@@ -559,24 +564,37 @@ async function updateCompletion(): Promise<void> {
   if (el.selectionStart !== caret) return closeCompletion();
   const q = qualifierAt(sql.value, caret);
   if (!q) return closeCompletion();
-  const ref = resolveQualifier(tableRefsOf(sql.value), q.qualifier);
-  if (!ref) return closeCompletion();
+
+  /**
+   * 列か表かを決める。
+   *
+   * **表を書く位置（`FROM ライブラリー.`）は先に弾く**——`tableRefsOf` から見ると
+   * `FROM ASAOLIB` は表 1 つに見えるので、素直に解くと「`ASAOLIB` という表の列」を
+   * 引きに行って空振りする。それ以外は別名・表名で解き、解けなければ
+   * ライブラリーとみなす（`WHERE ASAOLIB.` のような書き方も拾える）。
+   */
+  const ref = isTablePosition(sql.value, q.start)
+    ? undefined
+    : resolveQualifier(tableRefsOf(sql.value), q.qualifier);
+  const kind: CandidateKind = ref ? "column" : "table";
 
   const seq = ++completionSeq;
-  const columns = await fetchColumns(props.system, ref);
+  const found = ref
+    ? await fetchColumns(props.system, ref)
+    : await fetchTables(props.system, q.qualifier);
   // 打鍵が進んでいたら捨てる
   if (seq !== completionSeq) return;
   const prefix = q.prefix.toUpperCase();
-  const items = columns.filter((c) => c.name.toUpperCase().startsWith(prefix)).slice(0, 50);
+  const items = found.filter((c) => c.name.toUpperCase().startsWith(prefix)).slice(0, 50);
   if (items.length === 0) return closeCompletion();
 
   const at = caretPosition(el, q.from);
   completionRange = { from: q.from, to: q.to };
-  completion.value = { items, index: 0, left: at.left, top: at.top + at.height };
+  completion.value = { items, kind, index: 0, left: at.left, top: at.top + at.height };
 }
 
 /** 候補を確定する。**`.` の後ろに打ちかけていた文字を置き換える** */
-async function pickCompletion(item: ColumnCandidate): Promise<void> {
+async function pickCompletion(item: Candidate): Promise<void> {
   const range = completionRange;
   if (!range) return;
   const text = sql.value.slice(0, range.from) + item.name + sql.value.slice(range.to);
@@ -907,6 +925,7 @@ function download(): void {
       <SqlCompletion
         v-if="completion"
         :items="completion.items"
+        :kind="completion.kind"
         :index="completion.index"
         :left="completion.left"
         :top="completion.top"
@@ -920,7 +939,8 @@ function download(): void {
       （「1 度に取得」はその 1 回ぶんの件数）。
       <br />
       Ctrl+/ でコメントの切り替え、Tab / Shift+Tab で字下げ。
-      <strong>表名や別名に「.」を打つと列の候補が出ます</strong>（↑↓ で選び、Enter か Tab で確定）。
+      <strong>表名や別名に「.」を打つと列の候補、ライブラリー名に「.」を打つと表の候補が出ます</strong>
+      （↑↓ で選び、Enter か Tab で確定）。
       Tab で欄から出たいときは Esc を押してから Tab を押します。
     </p>
 

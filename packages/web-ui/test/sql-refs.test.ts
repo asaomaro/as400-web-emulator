@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tableRefsOf, qualifierAt, resolveQualifier } from "../src/sqlRefs.js";
+import { tableRefsOf, qualifierAt, resolveQualifier, isTablePosition } from "../src/sqlRefs.js";
 
 /**
  * `別名.` から列の候補を出すための下ごしらえ。
@@ -127,5 +127,41 @@ describe("修飾子から表を解く", () => {
 
   it("知らない修飾子は解けない（候補を出さない）", () => {
     expect(resolveQualifier(refs, "ZZ")).toBeUndefined();
+  });
+});
+
+/**
+ * `FROM ライブラリー.` の修飾子は**ライブラリー**であって表ではない。
+ * `tableRefsOf` から見ると `FROM ASAOLIB` は表 1 つに見えるので、
+ * 書く位置で先に判別しないと「`ASAOLIB` という表の列」を引きに行って空振りする。
+ */
+describe("表を書く位置か", () => {
+  const at = (text: string) => isTablePosition(text, text.length);
+
+  it("FROM / JOIN の直後は表の位置", () => {
+    expect(at("SELECT * FROM ")).toBe(true);
+    expect(at("SELECT * FROM A INNER JOIN ")).toBe(true);
+  });
+
+  it("UPDATE / INSERT INTO の直後も表の位置", () => {
+    expect(at("UPDATE ")).toBe(true);
+    expect(at("INSERT INTO ")).toBe(true);
+  });
+
+  it("WHERE の中は表の位置ではない（そこの修飾子は別名）", () => {
+    expect(at("SELECT * FROM A T1 WHERE ")).toBe(false);
+    expect(at("SELECT ")).toBe(false);
+  });
+
+  it("小文字でも見る", () => {
+    expect(at("select * from ")).toBe(true);
+  });
+
+  /** 修飾子の開始位置が取れないと、この判定に渡すものが無い */
+  it("`qualifierAt` は修飾子の開始位置を返す", () => {
+    const text = "SELECT * FROM ASAOLIB.";
+    const q = qualifierAt(text, text.length)!;
+    expect(text.slice(q.start, q.start + q.qualifier.length)).toBe("ASAOLIB");
+    expect(isTablePosition(text, q.start)).toBe(true);
   });
 });

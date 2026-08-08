@@ -65,9 +65,10 @@ async function run(sql = "SELECT 1 FROM SYSIBM.SYSDUMMY1") {
 describe("実行", () => {
   it("選択中のシステムと SQL と pageSize を送る", async () => {
     const w = await run("SELECT 1 FROM SYSIBM.SYSDUMMY1");
-    // ペインを開いた時点で暖機を投げているので、実行の呼び出しを名指しで拾う
+    // ペインを開いた時点で暖機を、`FROM SYSIBM.` の時点で補完の問い合わせ（`SYSTABLES`）を
+    // 投げているので、**実行の呼び出しを中身で名指しして**拾う
     const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.find(
-      (c) => String(c[0]) === "/api/host/sql"
+      (c) => String(c[0]) === "/api/host/sql" && String((c[1] as RequestInit).body).includes("SYSDUMMY1")
     );
     expect(call).toBeDefined();
     const body = JSON.parse(String((call?.[1] as RequestInit).body));

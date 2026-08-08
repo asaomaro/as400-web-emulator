@@ -95,8 +95,10 @@ export function tableRefsOf(sql: string): TableRef[] {
 
 /** キャレット直前の `修飾子.途中まで` */
 export interface Qualifier {
-  /** `.` の前の語（別名か表名） */
+  /** `.` の前の語（別名・表名・ライブラリー） */
   qualifier: string;
+  /** 修飾子が始まる位置。**表を書く位置かどうかの判定**に使う */
+  start: number;
   /** `.` の後ろにすでに打たれている文字（候補の絞り込みに使う） */
   prefix: string;
   /** 置き換えを始める位置（`.` の次） */
@@ -110,11 +112,33 @@ const QUALIFIER = new RegExp(String.raw`(${NAME})\s*\.\s*([\w#$@]*)$`, "u");
 
 export function qualifierAt(text: string, caret: number): Qualifier | undefined {
   // **手前 200 文字だけ見る**。長い SQL で毎打鍵に全文を走らせない
-  const head = text.slice(Math.max(0, caret - 200), caret);
+  const headFrom = Math.max(0, caret - 200);
+  const head = text.slice(headFrom, caret);
   const m = QUALIFIER.exec(head);
   if (!m || m[1] === undefined) return undefined;
   const prefix = m[2] ?? "";
-  return { qualifier: m[1], prefix, from: caret - prefix.length, to: caret };
+  return {
+    qualifier: m[1],
+    start: headFrom + (m.index ?? 0),
+    prefix,
+    from: caret - prefix.length,
+    to: caret
+  };
+}
+
+/** 表を書く位置（この直後に来るのは表名）。ここの修飾子は**ライブラリー** */
+const TABLE_POSITION = new RegExp(String.raw`\b(?:FROM|JOIN|UPDATE|INSERT\s+INTO|INTO)\s*$`, "iu");
+
+/**
+ * その位置が「表を書くところ」か。
+ *
+ * `SELECT * FROM ASAOLIB.` の `ASAOLIB` は**ライブラリー**であって表ではない。
+ * ところが `tableRefsOf` から見ると `FROM ASAOLIB` は表 1 つに見えるので、
+ * 素直に解くと「`ASAOLIB` という表の列」を引きに行って空振りする。
+ * **書く位置で先に判別する**（純粋に手前の語だけ見れば決まる）。
+ */
+export function isTablePosition(text: string, at: number): boolean {
+  return TABLE_POSITION.test(text.slice(Math.max(0, at - 60), at));
 }
 
 /**
