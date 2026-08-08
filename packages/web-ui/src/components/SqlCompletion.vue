@@ -7,6 +7,8 @@
  * 変換中の文字が確定してしまうので、**ここは絶対にフォーカスを取らない**
  * （選ぶのは親のキー操作か、マウスの `mousedown` を止めてのクリック）。
  */
+import { nextTick, ref, watch } from "vue";
+import { scrollToShow } from "../keepVisible.js";
 import type { Candidate, CandidateKind } from "../sqlColumns.js";
 
 const props = defineProps<{
@@ -21,10 +23,37 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{ pick: [item: Candidate] }>();
+
+/**
+ * 選んでいる項目を見える位置に保つ。
+ *
+ * 一覧は 220px で頭打ちにしてスクロールするので、**↑↓ で枠の外へ出ると
+ * どれを選んでいるか分からなくなる**（利用者の指摘）。
+ * `scrollIntoView` は祖先まで動かしてページごとスクロールしうるので、
+ * ここだけを自分で動かす。計算は純関数（`keepVisible.ts`）。
+ */
+const list = ref<HTMLUListElement | undefined>();
+
+watch(
+  // 候補が入れ替わったときも見直す（選択が 0 に戻るので先頭へ）
+  () => [props.index, props.items] as const,
+  async () => {
+    await nextTick();
+    const ul = list.value;
+    const li = ul?.children[props.index];
+    if (!ul || !(li instanceof HTMLElement)) return;
+    ul.scrollTop = scrollToShow(
+      { scrollTop: ul.scrollTop, height: ul.clientHeight },
+      { top: li.offsetTop, height: li.offsetHeight }
+    );
+  },
+  { immediate: true }
+);
 </script>
 
 <template>
   <ul
+    ref="list"
     class="sqlc"
     role="listbox"
     :aria-label="props.kind === 'table' ? '表の候補' : '列の候補'"
