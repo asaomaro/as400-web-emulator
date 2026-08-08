@@ -581,12 +581,14 @@ describe("結果の最大化", () => {
     await maxButton(w).trigger("click");
     await flushPromises();
     expect(w.find(".splitter").exists(), "境界は隠れる").toBe(false);
-    expect(w.find("textarea").attributes("style"), "SQL 欄は隠れる").toContain("display: none");
+    // 入力欄は候補を重ねる箱（`.editor-wrap`）ごと隠れる。**箱を見る**——
+    // `textarea` 自身の style には高さしか付かない
+    expect(w.find(".editor-wrap").attributes("style"), "SQL 欄は隠れる").toContain("display: none");
 
     await maxButton(w).trigger("click");
     await flushPromises();
     expect(w.find(".splitter").exists()).toBe(true);
-    expect(w.find("textarea").attributes("style")).not.toContain("display: none");
+    expect(w.find(".editor-wrap").attributes("style")).not.toContain("display: none");
     w.unmount();
   });
 });

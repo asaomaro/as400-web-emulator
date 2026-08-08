@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { MSG_SYSTEM_GONE } from "../composables/opMessages.js";
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
 import LoadingBar from "./LoadingBar.vue";
 import PaneSplitter from "./PaneSplitter.vue";
 import { usePaneSplit } from "../composables/usePaneSplit.js";
@@ -19,6 +19,11 @@ import {
   MSG_PLAN_MODE_NO_ROWS_HINT
 } from "../composables/opMessages.js";
 import SqlLogPanel from "./SqlLogPanel.vue";
+import SqlCompletion from "./SqlCompletion.vue";
+import { toggleLineComment, indentLines, outdentLines } from "../sqlEdit.js";
+import { qualifierAt, resolveQualifier, tableRefsOf } from "../sqlRefs.js";
+import { fetchColumns, type ColumnCandidate } from "../sqlColumns.js";
+import { caretPosition } from "../composables/caretPosition.js";
 import SqlResultTable from "./SqlResultTable.vue";
 import { appendSqlLog, type SqlLogEntry } from "../sqlLog.js";
 
@@ -499,12 +504,167 @@ async function loadMore(): Promise<void> {
 
 
 
-/** Ctrl+Enter で実行（textarea 内なので Enter は改行のまま残す） */
+// ---- SQL 欄のキー操作と列の補完 ----
+
+/**
+ * 入力欄の実体。**選択範囲を戻すのに要る**——`v-model` で書き換えると
+ * キャレットが末尾へ飛ぶので、更新後に自分で置き直す。
+ */
+const editor = ref<HTMLTextAreaElement | undefined>();
+
+/**
+ * 編集結果を流し込む。**`nextTick` を挟んでから選択を戻す**——
+ * `sql.value` を変えた時点ではまだ DOM に反映されておらず、先に位置を書いても消える。
+ */
+async function applyEdit(result: { text: string; start: number; end: number }): Promise<void> {
+  sql.value = result.text;
+  await nextTick();
+  const el = editor.value;
+  if (!el) return;
+  el.selectionStart = result.start;
+  el.selectionEnd = result.end;
+}
+
+/**
+ * 列の候補。`別名.` / `表名.` を打つと出る。
+ *
+ * **`textarea` のままにする**（CodeMirror 等は入れない。AGENTS.md のバンドル規律）。
+ * 候補は入力欄に重ねた別の箱で、キーはこちらで捌く——候補側にフォーカスを渡すと
+ * 日本語の変換中に確定してしまう。
+ */
+const completion = ref<{ items: ColumnCandidate[]; index: number; left: number; top: number } | undefined>();
+/** いま出ている候補が置き換える範囲（`.` の次〜キャレット） */
+let completionRange: { from: number; to: number } | undefined;
+/** 打鍵のたびに前の問い合わせが後から返って上書きしないための世代番号 */
+let completionSeq = 0;
+
+function closeCompletion(): void {
+  completion.value = undefined;
+  completionRange = undefined;
+  // **返ってきた結果を捨てる**（閉じたあとに前の問い合わせが開き直さないように）
+  completionSeq += 1;
+}
+
+/**
+ * キャレットの手前を見て候補を出す。**`.` の直後と、その後の打ち足しの両方**で走る。
+ *
+ * 表が解けない・列が引けないときは**黙って閉じる**——候補が出ないだけで、
+ * SQL を書く手は止めない。
+ */
+async function updateCompletion(): Promise<void> {
+  const el = editor.value;
+  if (!el || !props.system) return closeCompletion();
+  const caret = el.selectionEnd;
+  // 範囲選択中は出さない（選択を潰す操作になる）
+  if (el.selectionStart !== caret) return closeCompletion();
+  const q = qualifierAt(sql.value, caret);
+  if (!q) return closeCompletion();
+  const ref = resolveQualifier(tableRefsOf(sql.value), q.qualifier);
+  if (!ref) return closeCompletion();
+
+  const seq = ++completionSeq;
+  const columns = await fetchColumns(props.system, ref);
+  // 打鍵が進んでいたら捨てる
+  if (seq !== completionSeq) return;
+  const prefix = q.prefix.toUpperCase();
+  const items = columns.filter((c) => c.name.toUpperCase().startsWith(prefix)).slice(0, 50);
+  if (items.length === 0) return closeCompletion();
+
+  const at = caretPosition(el, q.from);
+  completionRange = { from: q.from, to: q.to };
+  completion.value = { items, index: 0, left: at.left, top: at.top + at.height };
+}
+
+/** 候補を確定する。**`.` の後ろに打ちかけていた文字を置き換える** */
+async function pickCompletion(item: ColumnCandidate): Promise<void> {
+  const range = completionRange;
+  if (!range) return;
+  const text = sql.value.slice(0, range.from) + item.name + sql.value.slice(range.to);
+  const caret = range.from + item.name.length;
+  closeCompletion();
+  await applyEdit({ text, start: caret, end: caret });
+  editor.value?.focus();
+}
+
+function moveCompletion(delta: number): void {
+  const c = completion.value;
+  if (!c) return;
+  c.index = (c.index + delta + c.items.length) % c.items.length;
+}
+
+/**
+ * SQL 欄のキー操作。
+ *
+ * - Ctrl+Enter … 実行（`textarea` なので Enter は改行のまま残す）
+ * - Ctrl+/ … 選択行のコメントを切り替え
+ * - Tab / Shift+Tab … インデントの追加・削除
+ * - 候補が出ている間は ↑↓ / Enter / Tab / Esc が候補側の操作になる
+ *
+ * ⚠ **Tab を奪うとキーボードだけで欄から出られなくなる。** Esc で候補を閉じたうえで、
+ * **Esc の直後の Tab は素通しする**（`escaped`）ことで逃げ道を残す。
+ */
+let escaped = false;
+
 function onKeydown(e: KeyboardEvent): void {
+  const el = editor.value;
+  const c = completion.value;
+
+  if (c) {
+    if (e.key === "ArrowDown") return e.preventDefault(), moveCompletion(1);
+    if (e.key === "ArrowUp") return e.preventDefault(), moveCompletion(-1);
+    if (e.key === "Enter" || e.key === "Tab") {
+      // **変換中の Enter は取らない**（日本語入力の確定を横取りしない）
+      if (e.isComposing) return;
+      e.preventDefault();
+      void pickCompletion(c.items[c.index]!);
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeCompletion();
+      return;
+    }
+  }
+
+  if (e.key === "Escape") {
+    // 次の Tab を素通しさせる（フォーカスの逃げ道）
+    escaped = true;
+    return;
+  }
+
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && canRun.value) {
     e.preventDefault();
     void execute();
+    return;
   }
+
+  // `/` は配列によって `.` などになるが、`code` は物理キーなので両方見る
+  if ((e.ctrlKey || e.metaKey) && (e.key === "/" || e.code === "Slash") && el) {
+    e.preventDefault();
+    void applyEdit(toggleLineComment(sql.value, el.selectionStart, el.selectionEnd));
+    return;
+  }
+
+  if (e.key === "Tab" && el) {
+    if (escaped) {
+      // Esc の直後だけは素通し（欄から出る）
+      escaped = false;
+      return;
+    }
+    e.preventDefault();
+    const edit = e.shiftKey
+      ? outdentLines(sql.value, el.selectionStart, el.selectionEnd)
+      : indentLines(sql.value, el.selectionStart, el.selectionEnd);
+    void applyEdit(edit);
+    return;
+  }
+
+  escaped = false;
+}
+
+/** 打つたび・動くたびに候補を出し直す。**閉じる判断もここ**（`.` から離れたら消える） */
+function onEditorInput(): void {
+  void updateCompletion();
 }
 
 /**
@@ -730,20 +890,38 @@ function download(): void {
       </button>
     </header>
 
-    <textarea
-      v-show="!split.maximized.value"
-      v-model="sql"
-      class="editor"
-      :style="{ height: `${split.topHeight.value}px` }"
-      spellcheck="false"
-      placeholder="SELECT * FROM QSYS2.SYSTABLES FETCH FIRST 100 ROWS ONLY"
-      @keydown="onKeydown"
-    ></textarea>
+    <!-- 候補を重ねる基準。入力欄の左上を原点に置きたいので position: relative -->
+    <div v-show="!split.maximized.value" class="editor-wrap">
+      <textarea
+        ref="editor"
+        v-model="sql"
+        class="editor"
+        :style="{ height: `${split.topHeight.value}px` }"
+        spellcheck="false"
+        placeholder="SELECT * FROM QSYS2.SYSTABLES FETCH FIRST 100 ROWS ONLY"
+        @keydown="onKeydown"
+        @input="onEditorInput"
+        @click="onEditorInput"
+        @blur="closeCompletion"
+      ></textarea>
+      <SqlCompletion
+        v-if="completion"
+        :items="completion.items"
+        :index="completion.index"
+        :left="completion.left"
+        :top="completion.top"
+        @pick="pickCompletion"
+      />
+    </div>
     <p v-show="!split.maximized.value" class="hint">
       SELECT も更新（INSERT / UPDATE / DELETE / CREATE …）も実行できます（Ctrl+Enter で実行）。
       <strong>更新は取り消せません。</strong><strong>「;」で区切ると順に実行し、
       結果ごとにタブが出ます。</strong>下までスクロールするか End / PageDown で続きを読み足します
       （「1 度に取得」はその 1 回ぶんの件数）。
+      <br />
+      Ctrl+/ でコメントの切り替え、Tab / Shift+Tab で字下げ。
+      <strong>表名や別名に「.」を打つと列の候補が出ます</strong>（↑↓ で選び、Enter か Tab で確定）。
+      Tab で欄から出たいときは Esc を押してから Tab を押します。
     </p>
 
     <!-- SQL 欄と結果欄の境界。この罫線を掴んで高さを変える -->
@@ -951,6 +1129,8 @@ function download(): void {
 header { flex: none; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 h2 { margin: 0; font-size: 13px; font-family: var(--mono); font-weight: 700; }
 label { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; color: var(--muted); }
+/* 候補を重ねる基準。入力欄と同じ矩形にするため、余白も枠も持たせない */
+.editor-wrap { flex: none; position: relative; width: 100%; }
 .editor { flex: none;
   width: 100%;
   box-sizing: border-box;
