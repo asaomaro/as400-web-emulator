@@ -97,6 +97,12 @@
 - 表を持つペイン（一覧・管理・SQL）は**ペイン自体をスクロールさせない**。ペイン根を `flex-direction: column` にし、
   スクロールは内側の 1 枚（`.scroll` / `.section` / `.rows-scroll`）に閉じ込める。
   こうすると絞り込みの帯や見出しが流れず、`thead th { position: sticky; top: 0 }` が**ペインの上端**に効く。
+- **スクロールの枠は「中身を出す箱」に置く。** 実行計画は図と詳細を**別々に**縦スクロールさせる
+  （`PlanViewer` の `.pv-main` / `.pv-side`）。外側（`SqlPane` の `.plan-view` /
+  `PlanListPane` の `.pl-viewer`）は `overflow: hidden` にする——外でもスクロールさせると
+  縦棒が 3 本並び、どれを動かせばよいか分からなくなる（利用者の指摘）。
+  枠には**親から高さを貰い切らせる**（`height: 100%` ＋ `min-height: 0`）。中身なりの高さだと
+  横スクロールバーが画面の途中に浮き、その下が死んだ余白になる。
 - sticky な `th` には**背景色（`--card`）が必須**——行に背景が無いので、無いと本文が透けて重なる。
 - `border-collapse: collapse` では sticky にした `th` の罫線が一緒にスクロールして消える。
   罫線は `border-bottom` ではなく `box-shadow: inset 0 -1px 0 var(--line)` で描く。

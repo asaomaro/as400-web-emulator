@@ -1153,13 +1153,22 @@ thead th:hover .col-grip::after,
 /* 件数が伸びても右がずれないように幅を取る */
 .logbtn .cnt { min-width: 4ch; display: inline-block; text-align: right; font-variant-numeric: tabular-nums; }
 
-/* 実行計画。結果表（.rows-scroll）と同じく**ここだけがスクロール**する。
-   高さは親（.results）から貰うので、SQL 欄との境界を動かせばそのまま広がる */
+/* 実行計画。高さは親（.results）から貰うので、SQL 欄との境界を動かせばそのまま広がる。
+   **スクロールはここではしない**——図と詳細が別々に縦スクロールする
+   （`PlanViewer` の `.pv-main` / `.pv-side`）。ここを `auto` にすると
+   その 2 本に加えてペイン全体の縦棒が出て、どれを動かせばよいか分からなくなる */
 .plan-view {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 8px 4px 0;
+  display: flex;
+  flex-direction: column;
+}
+/* 中の `PlanViewer` に高さを渡す（`height: 100%` の受け皿になる） */
+.plan-view :deep(.plan-viewer) {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .plan-error {
   color: var(--t-red);
