@@ -52,6 +52,18 @@ function showPlan(plan) {
 
 const SQL = "SELECT COUNT(*) AS N FROM QSYS2.SYSCOLUMNS WHERE TABLE_SCHEMA = 'QSYS2'";
 
+/**
+ * **リテラルを含まない文**も必ず試す。
+ *
+ * `WHERE X = 'QSYS2'` のような文はホストが値を `?` に置き換えて記録する（値は `3010` に入る）ので、
+ * モニターの `QQ1000` が投げた文と**一致しない**。上の `SQL` はその形なので、
+ * 「文が一致した群を選ぶ」経路が壊れていても件数で選ぶ 2 段目に落ちて通ってしまう。
+ * リテラルの無い文は逐語で記録されるため、**選び方の誤りがここでしか出ない**
+ * （実際、`STRDBMON` 直後の `QQUCNT=0`（計画記録を持たない受け皿）を先に掴んでいて、
+ * この形の文がことごとく空の計画になっていた。利用者の報告で判明）。
+ */
+const SQL_NO_LITERAL = "SELECT TABLE_NAME, TABLE_SCHEMA FROM QSYS2.SYSTABLES FETCH FIRST 5 ROWS ONLY";
+
 async function main() {
   line(`### ${which} host=${cfg.host}`);
   const conn = await DbConnection.connect(cfg);
@@ -68,6 +80,13 @@ async function main() {
       showPlan(r.plan);
       if (r.rows !== undefined) throw new Error("no-rows なのに行が返っている");
       return "行なし（期待どおり）";
+    });
+
+    await step("**リテラルを含まない文**でも計画が採れる（QQ1000 が逐語で記録される形）", async () => {
+      const r = await capturePlan(conn, SQL_NO_LITERAL, { mode: "run", at: new Date().toISOString() });
+      showPlan(r.plan);
+      if (r.plan.summary.nodeCount === 0) throw new Error("ノードが 0 件（群の選び方が壊れている）");
+      return `ノード ${r.plan.summary.nodeCount} 件`;
     });
 
     await step("no-rows は非クエリ文を拒む", async () => {

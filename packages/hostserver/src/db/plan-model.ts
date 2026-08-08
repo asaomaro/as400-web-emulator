@@ -534,11 +534,37 @@ function normalizeStatement(s: string): string {
  * DB モニターは**ジョブ全体**を採るので、`STRDBMON` / `ENDDBMON` の `CALL` など
  * 対象外の記録が必ず混ざる。そこで 2 段で選ぶ:
  *
- * 1. `QQ1000` が対象の文と一致する記録の `QQUCNT`
+ * 1. `QQ1000` が対象の文と一致し、**かつ計画記録を持つ** `QQUCNT`
  * 2. 一致が無ければ、**計画記録（`QQQDTN` を持つもの）が最も多い `QQUCNT`**
  *
  * 2 段目が要るのは、**長い文で `QQ1000` が切り詰められる**ことがあるため
  * （列幅の上限に当たる）。前方一致も見て、それでも駄目なら件数で決める。
+ *
+ * ## 1 段目で「計画記録を持つ群」に限る理由（SR-OSAKA 7.3 で実測）
+ *
+ * 同じ文のテキストが **`QQUCNT` の違う 2 つの群**に現れる。`STRDBMON` 直後の
+ * `QQUCNT=0` は**モニター自身の目印（`3018`）と、これから実行する文の要約（`1000`）**
+ * を持つ受け皿で、**計画記録を 1 件も持たない**。実行の記録は別の `QQUCNT`
+ * （実測で 3・5・7…）に付く。
+ *
+ * ```
+ * #0 QQUCNT=0 QQRID=3018                     ← STRDBMON の目印
+ * #1 QQUCNT=0 QQRID=1000 QQ1000="SELECT …"   ← 文のテキストだけ（計画は無い）
+ * #2 QQUCNT=3 QQRID=3000 QQQDTN=1            ← ここからが本体
+ * …
+ * #8 QQUCNT=3 QQRID=1000 QQ1000="SELECT …"
+ * ```
+ *
+ * 群は**現れた順**に並ぶので `QQUCNT=0` が先に当たる。件数を見ずに「先に一致した群」を
+ * 返していたため、**リテラルを含まない文はことごとく空の計画になっていた**
+ * （`SELECT * FROM ASAOLIB.M_MENUTR T1 INNER JOIN …` で再現）。
+ * リテラルを含む文が無事だったのは、ホストが `WHERE X = 'QSYS2'` を `?` に置き換えて
+ * 記録する（値は `3010` に入る）ので**テキストが一致せず 2 段目に落ちていた**だけ
+ * ——つまり偶然で、`QSYS2` を対象にした検証文ばかり試していて気づけなかった。
+ *
+ * 計画記録を持たない群を飛ばしても**他人の計画を掴むことにはならない**——
+ * `capturePlan` はモニターの窓の中で対象の文と `ENDDBMON` の `CALL` しか流さず、
+ * 計画記録が付くのは対象の文だけだから（`QQUCNT=0` の受け皿と 2 群だけになるのを実測）。
  *
  * **どれも選べなければ空配列を返す**——空の計画を「成功」として返さないため、
  * 呼び出し側がそうと分かるようにする。
@@ -548,23 +574,36 @@ export function pickStatementRecords(records: MonitorRecord[], sql: string): Mon
   if (groups.size === 0) return [];
   const want = normalizeStatement(sql);
 
-  // 1 段目: 完全一致 → 前方一致（切り詰め対策）
+  /** 計画記録（ブロック番号を持つもの）の数。**0 の群は答えになり得ない** */
+  const planCount = (list: MonitorRecord[]): number => list.filter((r) => r.QQQDTN !== null).length;
+
+  // 1 段目: 文が一致する群のうち**計画記録を持つもの**。完全一致 → 前方一致（切り詰め対策）。
+  // 同点なら先に現れたほうを採る（決定的にする）
   for (const exact of [true, false]) {
+    let best: MonitorRecord[] = [];
+    let bestCount = 0;
     for (const [, list] of groups) {
+      const count = planCount(list);
+      // **計画記録を持たない群は、文が一致しても選ばない**（下の注記）
+      if (count === 0 || count <= bestCount) continue;
       const hit = list.some((r) => {
         const text = normalizeStatement(r.QQ1000 ?? "");
         if (text === "") return false;
         return exact ? text === want : want.startsWith(text) && text.length >= 20;
       });
-      if (hit) return list;
+      if (hit) {
+        best = list;
+        bestCount = count;
+      }
     }
+    if (bestCount > 0) return best;
   }
 
   // 2 段目: 計画記録が最も多い群。**同数なら先に現れたほうを採る**（決定的にする）
   let best: MonitorRecord[] = [];
   let bestCount = 0;
   for (const [, list] of groups) {
-    const count = list.filter((r) => r.QQQDTN !== null).length;
+    const count = planCount(list);
     if (count > bestCount) {
       best = list;
       bestCount = count;
